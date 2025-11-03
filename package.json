@@ -1,0 +1,37 @@
+{
+  "name": "react-advanced-state-hook",
+  "version": "1.0.0",
+  "description": "A React hook that extends useState with persistence, debouncing, and cross-tab/cross-component state sharing.",
+  "main": "src/index.js",
+  "module": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/YOUR_USERNAME/react-advanced-state-hook.git"
+  },
+  "keywords": [
+    "react",
+    "hook",
+    "useState",
+    "persist",
+    "localStorage",
+    "sessionStorage",
+    "debounce",
+    "cross-tab",
+    "zustand",
+    "state management",
+    "state"
+  ],
+  "author": "Your Name",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/YOUR_USERNAME/react-advanced-state-hook/issues"
+  },
+  "homepage": "https://github.com/YOUR_USERNAME/react-advanced-state-hook#readme",
+  "peerDependencies": {
+    "react": ">=16.8.0"
+  }
+}
