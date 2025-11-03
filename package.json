@@ -1,37 +1,35 @@
 {
   "name": "react-advanced-state-hook",
   "version": "1.0.0",
-  "description": "A React hook that extends useState with persistence, debouncing, and cross-tab/cross-component state sharing.",
+  "description": "A React hook that extends useState with persistence, debouncing, and advanced cross-component/tab sync.",
   "main": "src/index.js",
-  "module": "src/index.js",
   "type": "module",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/YOUR_USERNAME/react-advanced-state-hook.git"
   },
   "keywords": [
     "react",
     "hook",
     "useState",
-    "persist",
+    "persistence",
     "localStorage",
     "sessionStorage",
     "debounce",
-    "cross-tab",
     "zustand",
-    "state management",
-    "state"
+    "context",
+    "cross-tab"
   ],
-  "author": "Your Name",
+  "author": "Dr. Burkhard Heisen",
   "license": "MIT",
-  "bugs": {
-    "url": "https://github.com/YOUR_USERNAME/react-advanced-state-hook/issues"
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/heisenware/react-advanced-state-hook"
   },
-  "homepage": "https://github.com/YOUR_USERNAME/react-advanced-state-hook#readme",
   "peerDependencies": {
-    "react": ">=16.8.0"
-  }
+    "react": "^16.8.0 || ^17.0.0 || ^18.0.0",
+    "react-dom": "^16.8.0 || ^17.0.0 || ^18.0.0"
+  },
+  "files": [
+    "src"
+  ]
 }

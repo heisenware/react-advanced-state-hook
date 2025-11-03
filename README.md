@@ -91,6 +91,26 @@ const ComponentB = () => {
 }
 ```
 
+## Running the Example Project
+
+This repository includes an `/example` folder so you can test the hook.
+
+To run it:
+
+1. Clone the repository.
+
+2. Set up a simple React project (using Vite, Next.js, or `create-react-app`).
+
+3. Inside your test project's src folder, copy the `useAdvancedState.js` file (or `src/index.js`) from this library.
+
+4. Copy the `example/App.js` and `example/index.js` files into your test project's src folder (you can overwrite the existing `App.js` and `index.js`).
+
+5. Make sure the imports are correct (e.g., `import { useAdvancedState } from './useAdvancedState'`).
+
+6. Run `npm install` and `npm run dev` (or `npm start`).
+
+The example app will open in your browser, and you can follow the on-screen instructions to test persistence, cross-tab sync, and scoping.
+
 ## API
 
 `useAdvancedState(key, options)`
