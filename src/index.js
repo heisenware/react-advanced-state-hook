@@ -80,21 +80,34 @@ function createStore () {
 }
 
 // --- React Context ---
+// The context now holds an object: { store, prefix }
 const AdvancedStateContext = createContext(null)
 
 /**
  * Provides the advanced state context to its children.
  * Required for 'cross-component' and 'cross-component-and-tab' notifications.
+ * @param {object} props
+ * @param {React.ReactNode} props.children - The app components.
+ * @param {string} [props.prefix] - A custom prefix for all storage keys (defaults to 'advState').
  */
-export function AdvancedStateProvider ({ children }) {
+export function AdvancedStateProvider ({ children, prefix }) {
   // Use useRef to ensure store is created only once
   const storeRef = useRef(null)
   if (!storeRef.current) {
     storeRef.current = createStore()
   }
 
+  // Memoize the context value to prevent unnecessary re-renders
+  const contextValue = useMemo(
+    () => ({
+      store: storeRef.current,
+      prefix: prefix || 'advState'
+    }),
+    [prefix]
+  )
+
   return (
-    <AdvancedStateContext.Provider value={storeRef.current}>
+    <AdvancedStateContext.Provider value={contextValue}>
       {children}
     </AdvancedStateContext.Provider>
   )
@@ -149,28 +162,37 @@ function parsePathScope (pattern) {
 
 /**
  * Creates the unique storage key based on scope.
+ * @param {string} prefix - The global prefix (from context).
  * @param {string} key - The base key.
- * @param {string} persist - 'local' or 'session'.
  * @param {string} scopeByUrlParam - The URL param name.
  * @param {string} scopeByUrlPath - The URL path pattern.
  * @returns {string} - The final, unique key.
  */
-function getScopedStorageKey (key, persist, scopeByUrlParam, scopeByUrlPath) {
+function getScopedStorageKey (
+  prefix,
+  key,
+  scopeByUrlParam,
+  scopeByUrlPath
+) {
   let scope = ''
 
   if (scopeByUrlParam) {
     const paramValue =
       getUrlParam(scopeByUrlParam) || `default-${scopeByUrlParam}`
-    scope = `param:${scopeByUrlParam}:${paramValue}`
+    // Use only the value for the scope
+    scope = paramValue
   } else if (scopeByUrlPath) {
     const pathScope = parsePathScope(scopeByUrlPath) || 'default-path-scope'
-    scope = `path:${pathScope}`
+    // Use only the parsed value for the scope
+    scope = pathScope
   }
 
-  // Use a different prefix for session vs local to avoid collisions
-  const persistPrefix = persist === 'session' ? 'advStateS' : 'advStateL'
+  // New simpler key format: [prefix]:[scope]:[key] or [prefix]:[key]
+  const parts = [prefix]
+  if (scope) parts.push(scope)
+  parts.push(key)
 
-  return scope ? `${persistPrefix}:${scope}:${key}` : `${persistPrefix}:${key}`
+  return parts.join(':')
 }
 
 /**
@@ -223,7 +245,9 @@ export function useAdvancedState (
     scopeByUrlPath
   } = {}
 ) {
-  const store = useContext(AdvancedStateContext)
+  const context = useContext(AdvancedStateContext)
+  const store = context?.store
+  const prefix = context?.prefix || 'advState' // Default prefix
 
   // Helper to get the initial value from all sources
   const getInitialValue = useCallback(() => {
@@ -236,6 +260,7 @@ export function useAdvancedState (
     // 2. Check storage (for persist)
     if (persist) {
       const storageKey = getScopedStorageKey(
+        prefix,
         key,
         persist,
         scopeByUrlParam,
@@ -259,7 +284,7 @@ export function useAdvancedState (
       }
     }
     return initial
-  }, [key, persist, scopeByUrlParam, scopeByUrlPath, store])
+  }, [key, persist, scopeByUrlParam, scopeByUrlPath, store, prefix])
   // We intentionally omit `initial` from deps so it only runs on first mount
 
   // This state is updated *immediately* for UI responsiveness
@@ -290,6 +315,7 @@ export function useAdvancedState (
       }
 
       const storageKey = getScopedStorageKey(
+        prefix,
         key,
         persist,
         scopeByUrlParam,
@@ -313,7 +339,7 @@ export function useAdvancedState (
         console.error(`Failed to persist state to ${persist}Storage:`, e)
       }
     },
-    [key, persist, notify, scopeByUrlParam, scopeByUrlPath, store]
+    [key, persist, notify, scopeByUrlParam, scopeByUrlPath, store, prefix]
   )
 
   // Create a memoized debounced function for syncing
@@ -361,6 +387,7 @@ export function useAdvancedState (
     }
 
     const storageKey = getScopedStorageKey(
+      prefix,
       key,
       persist,
       scopeByUrlParam,
@@ -390,7 +417,7 @@ export function useAdvancedState (
     return () => {
       window.removeEventListener('storage', handleStorageChange)
     }
-  }, [key, persist, notify, scopeByUrlParam, scopeByUrlPath, store])
+  }, [key, persist, notify, scopeByUrlParam, scopeByUrlPath, store, prefix])
 
   // Effect for Context Events (other components, same tab)
   useEffect(() => {

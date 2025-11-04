@@ -6,7 +6,8 @@ A powerful React hook that extends useState with optional persistence, debouncin
 - Debounce Updates: Automatically debounce state persistence and notifications. Local state updates are immediate!
 - Cross-Component Sync: Share state between components without prop drilling (similar to Zustand).
 - Cross-Tab Sync: Share state between different browser tabs.
-- Scoped Storage: Automatically scope persisted state to URL parameters (like appId) or URL path segments (like `$1-$2`).
+- Scoped Storage: Automatically scope persisted state to URL parameters (like `appId`) or URL path segments (like `$1`).
+- Custom Prefix: Add a global custom prefix to all storage keys.
 
 ## Install
 
@@ -29,7 +30,7 @@ import { AdvancedStateProvider } from 'react-advanced-state-hook'
 
 ReactDOM.render(
   <React.StrictMode>
-    <AdvancedStateProvider>
+    <AdvancedStateProvider prefix='myAwesomeApp'>
       <App />
     </AdvancedStateProvider>
   </React.StrictMode>,
@@ -55,13 +56,16 @@ const ComponentA = () => {
     notify: 'cross-component-and-tab',
     scopeByUrlParam: 'appId' // Key will be scoped to 'my-app'
   })
+  // Storage key will be: "myAwesomeApp:my-app:username"
 
   // This state is scoped by URL path:
+  // $2 corresponds to 'project-123'
   const [docId, setDocId] = useAdvancedState('currentDoc', {
     initial: null,
     persist: 'local',
-    scopeByUrlPath: '$2' // Key will be scoped to 'project-123'
+    scopeByUrlPath: '$2_editor' // Key will be scoped to 'project-123_editor'
   })
+  // Storage key will be: "myAwesomeApp:project-123_editor:currentDoc"
 
   return (
     <div>
@@ -73,9 +77,7 @@ const ComponentA = () => {
 }
 
 // --- Component B (in a different part of your app) ---
-
 const ComponentB = () => {
-
   // This component will update in real-time with ComponentA
   // because they share the same key ('username')
 
@@ -116,7 +118,16 @@ The example app will open in your browser, and you can follow the on-screen inst
 
 ## API
 
-`useAdvancedState(key, options)`
+### `AdvancedStateProvider`
+
+A wrapper component that provides the context for the hook.
+
+**Props:**
+
+- `children` (React.ReactNode): Your application components.
+- `prefix` (string): Optional. A custom prefix to use for all `localStorage` / `sessionStorage` keys. Defaults to `"advState"`.
+
+### `useAdvancedState(key, options)`
 
 - `key` (string): **Required**. A unique string key to identify this piece of state.
 - `options` (object): An optional configuration object.
@@ -141,14 +152,18 @@ The example app will open in your browser, and you can follow the on-screen inst
 
 To ensure your state stays in sync and behaves predictably, follow these simple rules.
 
-### Rule 1: Be consistent with configuration.
+### Rule 1: Be consistent with configuration
 
-All components that use the same key should also use the exact same values for persist, scopeByUrlParam, and scopeByUrlPath. Using different configurations for the same key will lead to desynchronized state and unpredictable behavior.
+All components that use the same key should also use the exact same values for `persist`, `scopeByUrlParam`, and `scopeByUrlPath`. Using different configurations for the same key will lead to desynchronized state and unpredictable behavior.
 
-### Rule 2: The initial value is "first-come, first-served".
+### Rule 2: The `initial` value is "first-come, first-served"
 
-If multiple components use the same key, the initial value from the first component to mount will be used. All other components will ignore their initial value and use the one that was already set.
+If multiple components use the same key, the `initial` value from the *first component to mount* will be used. All other components will ignore their `initial` value and use the one that was already set.
 
-### Rule 3: Scoping only applies when persist is set.
+### Rule 3: Scoping only applies when persist is set
 
-The scopeByUrlParam and scopeByUrlPath options are only used to create the storage key for localStorage or sessionStorage. If you do not set the persist option, these scoping options are ignored.
+The `scopeByUrlParam` and `scopeByUrlPath` options are only used to create the storage key for `localStorage` or `sessionStorage`. If you do not set the `persist` option, these scoping options are ignored.
+
+### Rule 4: Use `persist: 'local'` for cross-tab sync
+
+The browser's storage event, which is used for cross-tab sync, is only reliably fired for `localStorage`. Using `persist: 'session'` with a cross-tab notification is not guaranteed to work.

@@ -1,14 +1,24 @@
 import React from 'react'
-import ReactDOM from 'react-dom/client'
-import { AdvancedStateProvider } from './useAdvancedState' // Adjust this path if needed
+import { createRoot } from 'react-dom/client'
 import App from './App'
+// Adjust this import path to where your hook file is located
+import { AdvancedStateProvider } from './useAdvancedState'
 
-// 1. Wrap your entire app (or the relevant part) in the provider
-// This is necessary for 'cross-component' and 'cross-component-and-tab'
-const root = ReactDOM.createRoot(document.getElementById('root'))
+// 1. Get the root element
+const container = document.getElementById('root')
+
+// 2. Create a root
+const root = createRoot(container)
+
+// 3. Initial render: Render your app
 root.render(
   <React.StrictMode>
-    <AdvancedStateProvider>
+    {/*
+      Add the 'prefix' prop here to test custom storage keys.
+      Check your browser's devtools (Application -> Local Storage)
+      to see the keys prefixed with "myTestApp:"
+    */}
+    <AdvancedStateProvider prefix='myTestApp'>
       <App />
     </AdvancedStateProvider>
   </React.StrictMode>

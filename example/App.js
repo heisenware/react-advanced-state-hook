@@ -134,6 +134,12 @@ export default function App () {
         <h3 style={styles.h3}>How to Test:</h3>
         <ol style={styles.instructionList}>
           <li style={styles.li}>
+            <strong>Test Custom Prefix:</strong> Open your browser's DevTools,
+            go to the "Application" tab, and check "Local Storage". You should
+            see keys like <code style={styles.code}>myTestApp:Hello!</code> or{' '}
+            <code style={styles.code}>myTestApp:app1:Hello!</code> (if scoped).
+          </li>
+          <li style={styles.li}>
             <strong>Test Instant Local State:</strong> Type in the "Component A"
             input. You'll see its own "Current Value" update immediately.
           </li>
