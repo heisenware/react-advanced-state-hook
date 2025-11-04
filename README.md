@@ -1,15 +1,36 @@
 # React Advanced State Hook
 
-A powerful React hook that extends useState with optional persistence, debouncing, and advanced cross-component/cross-tab state synchronization.
+A powerful React hook that extends `useState` with persistence, debouncing, and advanced cross-component/cross-tab state synchronization.
 
-- Persist State: Save state to localStorage or sessionStorage.
-- Debounce Updates: Automatically debounce state persistence and notifications. Local state updates are immediate!
-- Cross-Component Sync: Share state between components without prop drilling (similar to Zustand).
-- Cross-Tab Sync: Share state between different browser tabs.
-- Scoped Storage: Automatically scope persisted state to URL parameters (like `appId`) or URL path segments (like `$1`).
-- Custom Prefix: Add a global custom prefix to all storage keys.
+This hook is designed to be a lightweight, flexible, and robust solution for managing complex state in React applications.
 
-## Install
+## Features
+
+- **Component-Local State:** Behaves just like `useState` by default.
+
+- **Persistent State:** Easily persist state to `localStorage` or `sessionStorage`.
+
+- **Debouncing:** Debounce persistence and notifications to prevent storming.
+
+- **Immediate UI Updates:** UI updates are immediate; debouncing only applies to syncing.
+
+- **Cross-Component Sync:** Share state between components in the same tab (like Zustand).
+
+- **Cross-Tab Sync:** Share state between multiple browser tabs.
+
+- **Hybrid Sync:** Share state across components _and_ tabs simultaneously.
+
+- **Flexible Scoping:**
+
+  - Scope persistent state by URL parameters (e.g., `?appId=123`).
+
+  - Scope persistent state by URL path (e.g., `/users/456/`).
+
+  - Add a custom prefix for all storage keys.
+
+- **SSR Safe:** Works correctly in Server-Side Rendering (SSR) environments.
+
+## Installation
 
 ```bash
 npm install react-advanced-state-hook
@@ -17,12 +38,10 @@ npm install react-advanced-state-hook
 
 ## Quick Start
 
-### 1. Wrap Your App
-
-Wrap your application (or the part of your app that will use the hook) with the `AdvancedStateProvider`.
+Wrap your application (or the part that needs shared state) with the `AdvancedStateProvider`.
 
 ```js
-// In your main index.js or App.js
+// In your index.js or App.js
 import React from 'react'
 import ReactDOM from 'react-dom'
 import App from './App'
@@ -30,7 +49,7 @@ import { AdvancedStateProvider } from 'react-advanced-state-hook'
 
 ReactDOM.render(
   <React.StrictMode>
-    <AdvancedStateProvider prefix='myAwesomeApp'>
+    <AdvancedStateProvider prefix='myApp'>
       <App />
     </AdvancedStateProvider>
   </React.StrictMode>,
@@ -38,132 +57,145 @@ ReactDOM.render(
 )
 ```
 
-### 2. Use the Hook
-
-Use the `useAdvancedState` hook just like `useState`, but with a unique key and an options object.
+Now you can use the hook anywhere in your app:
 
 ```js
 import { useAdvancedState } from 'react-advanced-state-hook'
 
-// --- Component A ---
-// Assuming URL is: https://example.com/app/project-123/editor?appId=my-app
-
-const ComponentA = () => {
-  // This state is scoped by URL parameter:
-  const [name, setName] = useAdvancedState('username', {
+function UserProfile() {
+  // This state will be shared across all components and tabs,
+  // persisted in localStorage, and scoped to the 'userId' URL param.
+  const [username, setUsername] = useAdvancedState('username', {
     initial: 'Guest',
     persist: 'local',
     notify: 'cross-component-and-tab',
-    scopeByUrlParam: 'appId' // Key will be scoped to 'my-app'
-  })
-  // Storage key will be: "myAwesomeApp:my-app:username"
-
-  // This state is scoped by URL path:
-  // $2 corresponds to 'project-123'
-  const [docId, setDocId] = useAdvancedState('currentDoc', {
-    initial: null,
-    persist: 'local',
-    scopeByUrlPath: '$2_editor' // Key will be scoped to 'project-123_editor'
-  })
-  // Storage key will be: "myAwesomeApp:project-123_editor:currentDoc"
-
-  return (
-    <div>
-      <h3>Component A (Editor)</h3>
-      <input type='text' value={name} onChange={e => setName(e.target.value)} />
-      <p>Current Doc Scope: {docId}</p>
-    </div>
-  )
-}
-
-// --- Component B (in a different part of your app) ---
-const ComponentB = () => {
-  // This component will update in real-time with ComponentA
-  // because they share the same key ('username')
-
-  const [name] = useAdvancedState('username', {
-    initial: 'Guest',
-    notify: 'cross-component', // Just listens for context updates
-    scopeByUrlParam: 'appId' // Must use same scope to sync
+    scopeByUrlParam: 'userId',
+    debounce: 300
   })
 
   return (
     <div>
-      <h3>Component B (Viewer)</h3>
-      <p>Current user: {name}</p>
+      <label>Username:</label>
+      <input value={username} onChange={e => setUsername(e.target.value)} />
     </div>
   )
 }
 ```
 
-## Running the Example Project
-
-This repository includes an `/example` folder so you can test the hook.
-
-To run it:
-
-1. Clone the repository.
-
-2. Set up a simple React project (using Vite, Next.js, or `create-react-app`).
-
-3. Inside your test project's src folder, copy the `src/index.js` (from this library) to `useAdvancedState.js`.
-
-4. Copy the `example/App.js` and `example/index.js` files into your test project's src folder (you can overwrite the existing `App.js` and `index.js`).
-
-5. Make sure the imports are correct (e.g., `import { useAdvancedState } from './useAdvancedState'`).
-
-6. Run `npm install` and `npm run dev` (or `npm start`).
-
-The example app will open in your browser, and you can follow the on-screen instructions to test persistence, cross-tab sync, and scoping.
-
 ## API
-
-### `AdvancedStateProvider`
-
-A wrapper component that provides the context for the hook.
-
-**Props:**
-
-- `children` (React.ReactNode): Your application components.
-- `prefix` (string): Optional. A custom prefix to use for all `localStorage` / `sessionStorage` keys. Defaults to `"advState"`.
 
 ### `useAdvancedState(key, options)`
 
-- `key` (string): **Required**. A unique string key to identify this piece of state.
-- `options` (object): An optional configuration object.
-  - `initial` (any): The initial value to use if no value is found in storage.
-  - `debounce` (number): Time in milliseconds to debounce persistence and notifications. Local state (UI) updates are always immediate. Defaults to `0` (no debounce).
-  - `persist` (`'local'` | `'session'`): The persistence strategy.
-    - `'local'`: Persist to localStorage.
-    - `'session'`: Persist to sessionStorage.
-  - `notify` (`'cross-component'` | `'cross-tab'` | `'cross-component-and-tab'`): The notification strategy.
-    - if not defined behaves like `useState`, local to the component.
-    - `'cross-component'`: Shares state with other components in the same tab (requires `AdvancedStateProvider`).
-    - `'cross-tab'`: Notifies other tabs (requires `persist`).
-    - `'cross-component-and-tab'`: Does both (requires `AdvancedStateProvider` and `persist`).
-  - `scopeByUrlParam` (string): A URL parameter name (e.g., `'appId'`) to scope the persisted state. Mutually exclusive with `scopeByUrlPath`.
-  - `scopeByUrlPath` (string): A string pattern to scope the persisted state. Placeholders ($1, $2, etc.) are replaced with the corresponding URL path segments (1-indexed). Mutually exclusive with `scopeByUrlParam`.
-    - Example: `scopeByUrlPath`: `'doc_$2-user_$4'`
-    - On URL `/app/project-abc/docs/user-xyz/edit`
-    - `$1` is `app`, `$2` is `project-abc`, `$3` is `docs`, `$4` is `user-xyz`
-    - Resulting scope key: `doc_project-abc-user_user-xyz`
+This is the main hook you will use. It takes a required `key` and an optional `options` object.
+
+- **`key`** (string)
+  **Required.** The unique key for this piece of state (e.g., `'username'`).
+
+- **`options`** (object)
+  An optional object to configure the hook's advanced features.
+
+---
+
+#### Options
+
+- **`initial`** (any)
+  The initial value to use if no value is found in storage. This value is now **eagerly written** to storage on mount if storage is empty.
+
+- **`debounce`** (number)
+  Debounce delay in milliseconds. Applies only to persistence and notifications, not the local UI update.
+
+- **`persist`** (string)
+  Specifies where to persist the state.
+
+  - `'local'` for `localStorage`.
+  - `'session'` for `sessionStorage`.
+  - If not set, state is in-memory only.
+
+- **`notify`** (string)
+  Defines the synchronization strategy.
+
+  - **(default)**: No notification. Behaves like `useState`.
+  - `'cross-component'`: Notifies other components in the same tab (requires `AdvancedStateProvider`).
+  - `'cross-tab'`: Notifies other tabs (requires `persist`).
+  - `'cross-component-and-tab'`: Does both (requires `AdvancedStateProvider` and `persist`).
+
+- **`scopeByUrlParam`** (string)
+  Scopes storage key by a URL parameter. E.g., `'appId'` uses the value of `?appId=...`.
+
+- **`scopeByUrlPath`** (string)
+  Scopes storage key by URL path segments. Uses string replacement for placeholders `$1`, `$2`, etc. E.g., `user_$1` with path `/users/123` becomes `user_123`.
+
+---
+
+### `<AdvancedStateProvider>`
+
+This provider component is **required** if you use the `notify: 'cross-component'` or `notify: 'cross-component-and-tab'` options. It's also used to set a custom prefix for all your storage keys.
+
+#### Props
+
+- **`prefix`** (string)
+  A custom prefix for all storage keys. Defaults to `'advState'`.
+  _Example:_ `<AdvancedStateProvider prefix="myApp">`
+
+## Storage Key Format
+
+The hook generates a clean, readable key for storage:
+
+`<prefix>:<scopeValue>:<key>`
+
+**Examples:**
+
+- With `prefix: 'myApp'`, `key: 'username'`:
+  `myApp:username`
+
+- With `prefix: 'myApp'`, `key: 'docTitle'`, `scopeByUrlParam: 'docId'` and URL `.../?docId=123`:
+  `myApp:123:docTitle`
+
+- With `prefix: 'wiki'`, `key: 'content'`, `scopeByUrlPath: 'page_$2'` and URL `.../user/abc/page/456`:
+  `wiki:page_abc:content`
 
 ## Best Practices & Caveats
 
-To ensure your state stays in sync and behaves predictably, follow these simple rules.
+- **Rule 1: Be Consistent.** All components sharing the same `key` should use the exact same `persist`, `scopeByUrlParam`, and `scopeByUrlPath` options. Mixing them will lead to unpredictable behavior and state divergence.
 
-### Rule 1: Be consistent with configuration
+- **Rule 2: Provider Placement.** Place the `AdvancedStateProvider` at the highest level possible, wrapping your entire application or the section that will use shared state.
 
-All components that use the same key should also use the exact same values for `persist`, `scopeByUrlParam`, and `scopeByUrlPath`. Using different configurations for the same key will lead to desynchronized state and unpredictable behavior.
+- **`initial` Value "Wins":** The `initial` value is only used the first time the hook mounts and finds no existing value in storage. After that, the value from storage will always be used, and other components' `initial` values will be ignored.
 
-### Rule 2: The `initial` value is "first-come, first-served"
+- **Scoping is for Storage:** The `scopeByUrlParam` and `scopeByUrlPath` options **only** affect persistence. They have no effect if `persist` is not set.
 
-If multiple components use the same key, the `initial` value from the *first component to mount* will be used. All other components will ignore their `initial` value and use the one that was already set.
+## How to Test (for development)
 
-### Rule 3: Scoping only applies when persist is set
+You can test this library locally by using the `example/App.js` and `example/index.js` files.
 
-The `scopeByUrlParam` and `scopeByUrlPath` options are only used to create the storage key for `localStorage` or `sessionStorage`. If you do not set the `persist` option, these scoping options are ignored.
+1. **Clone the repository.**
 
-### Rule 4: Use `persist: 'local'` for cross-tab sync
+2. **Create a test project:** In a separate directory, create a new React app (e.g., `npx create-react-app test-app`).
 
-The browser's storage event, which is used for cross-tab sync, is only reliably fired for `localStorage`. Using `persist: 'session'` with a cross-tab notification is not guaranteed to work.
+3. **Link your library:**
+
+   - In your `react-advanced-state-hook` library folder, run:
+
+     ```bash
+     npm link
+     ```
+
+   - In your `test-app` folder, run:
+
+     ```bash
+     npm link react-advanced-state-hook
+     ```
+
+4. **Replace test app files:**
+
+   - Copy the `example/App.js` file from the library into your `test-app/src/` folder.
+
+   - Copy the `example/index.js` file from the library into your `test-app/src/` folder.
+
+5. **Run the test app:**
+
+```bash
+npm start
+```
+
+You now have a running application where you can test all the features, including cross-tab sync and URL scoping.
