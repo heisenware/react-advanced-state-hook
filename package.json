@@ -1,8 +1,8 @@
 {
   "name": "react-advanced-state-hook",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "A React hook that extends useState with persistence, debouncing, and advanced cross-component/tab sync.",
-  "main": "src/index.js",
+  "main": "src/index.jsx",
   "type": "module",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
@@ -26,10 +26,9 @@
     "url": "https://github.com/heisenware/react-advanced-state-hook"
   },
   "peerDependencies": {
-    "react": "^16.8.0 || ^17.0.0 || ^18.0.0",
-    "react-dom": "^16.8.0 || ^17.0.0 || ^18.0.0"
+    "react": ">=16.8.0"
   },
   "files": [
-    "src"
+    "src/index.jsx"
   ]
 }

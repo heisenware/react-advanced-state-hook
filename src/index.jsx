@@ -168,12 +168,7 @@ function parsePathScope (pattern) {
  * @param {string} scopeByUrlPath - The URL path pattern.
  * @returns {string} - The final, unique key.
  */
-function getScopedStorageKey (
-  prefix,
-  key,
-  scopeByUrlParam,
-  scopeByUrlPath
-) {
+function getScopedStorageKey (prefix, key, scopeByUrlParam, scopeByUrlPath) {
   let scope = ''
 
   if (scopeByUrlParam) {
