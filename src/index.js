@@ -4,80 +4,93 @@ import React, {
   useState,
   useEffect,
   useCallback,
-  useRef,
-  useMemo
+  useMemo,
+  useRef
 } from 'react'
 
-// --- 1. Store Class for Context Notification ---
-// This is the "Zustand-like" part. It's a simple event emitter (pub-sub)
-// that allows components to subscribe to *specific keys* rather than
-// the entire state object, preventing unnecessary re-renders.
-
-class AdvancedStateStore {
-  constructor () {
-    // Use a Map to store subscribers for each key
-    // Map<key, Set<callback>>
-    this.subscribers = new Map()
-    // Use a Map to store the actual state values
-    // Map<key, value>
-    this.state = new Map()
-  }
-
-  /**
-   * Gets the current value for a given key.
-   */
-  get (key) {
-    return this.state.get(key)
-  }
-
-  /**
-   * Sets a value for a key and notifies all subscribers for that key.
-   */
-  set (key, value) {
-    // Only update and notify if the value has actually changed
-    if (this.state.get(key) === value) {
-      return
+// --- Debounce Utility ---
+/**
+ * Simple debounce function.
+ * @param {Function} func The function to debounce.
+ * @param {number} wait The wait time in milliseconds.
+ * @returns {Function} The debounced function.
+ */
+function debounce (func, wait) {
+  let timeout
+  return function executedFunction (...args) {
+    const later = () => {
+      clearTimeout(timeout)
+      func(...args)
     }
-    this.state.set(key, value)
-    // Notify all subscribers for this specific key
-    this.subscribers.get(key)?.forEach(callback => callback())
+    clearTimeout(timeout)
+    timeout = setTimeout(later, wait)
   }
+}
 
-  /**
-   * Subscribes a callback to changes for a specific key.
-   * Returns an unsubscribe function.
-   */
-  subscribe (key, callback) {
-    if (!this.subscribers.has(key)) {
-      this.subscribers.set(key, new Set())
-    }
-    this.subscribers.get(key).add(callback)
+// --- Pub/Sub Store for Cross-Component Sync ---
+/**
+ * Creates a lightweight pub/sub store for cross-component state.
+ * @returns {object} An object with {setState, subscribe, getState}.
+ */
+function createStore () {
+  const subscribers = new Map()
+  const state = new Map()
 
-    // Return the unsubscribe function
-    return () => {
-      this.subscribers.get(key)?.delete(callback)
+  return {
+    /**
+     * Sets a value in the store and notifies subscribers.
+     * @param {string} key The key to set.
+     * @param {any} value The value.
+     */
+    setState (key, value) {
+      state.set(key, value)
+      if (subscribers.has(key)) {
+        subscribers.get(key).forEach(callback => callback(value))
+      }
+    },
+    /**
+     * Subscribes a callback to a key.
+     * @param {string} key The key to subscribe to.
+     * @param {Function} callback The callback to run on update.
+     * @returns {Function} An unsubscribe function.
+     */
+    subscribe (key, callback) {
+      if (!subscribers.has(key)) {
+        subscribers.set(key, new Set())
+      }
+      const keySubscribers = subscribers.get(key)
+      keySubscribers.add(callback)
+      // Immediately call with current state if it exists
+      if (state.has(key)) {
+        callback(state.get(key))
+      }
+      return () => {
+        keySubscribers.delete(callback)
+      }
+    },
+    /**
+     * Gets a value from the store.
+     * @param {string} key The key to get.
+     * @returns {any} The value or undefined.
+     */
+    getState (key) {
+      return state.get(key)
     }
   }
 }
 
-// --- 2. React Context ---
-
-// Create a context to hold the single instance of our store
+// --- React Context ---
 const AdvancedStateContext = createContext(null)
 
 /**
- * AdvancedStateProvider
- * This provider component creates a single, stable instance of the
- * AdvancedStateStore and provides it to all descendant components.
- * It *must* be wrapped around any component using `useAdvancedState`
- * with the `notify: 'cross-component'` or `notify: 'cross-component-and-tab'` option.
+ * Provides the advanced state context to its children.
+ * Required for 'cross-component' and 'cross-component-and-tab' notifications.
  */
-export const AdvancedStateProvider = ({ children }) => {
-  // Use useRef to create and hold a single, stable instance of the store
-  // This ensures the store persists across re-renders without being recreated
+export function AdvancedStateProvider ({ children }) {
+  // Use useRef to ensure store is created only once
   const storeRef = useRef(null)
   if (!storeRef.current) {
-    storeRef.current = new AdvancedStateStore()
+    storeRef.current = createStore()
   }
 
   return (
@@ -87,372 +100,353 @@ export const AdvancedStateProvider = ({ children }) => {
   )
 }
 
-// --- 3. Helper Functions ---
+// --- Helper Functions ---
 
 /**
- * Gets the storage engine (localStorage or sessionStorage) based on the persist option.
+ * Gets a URL parameter by name.
+ * @param {string} name - The name of the URL parameter.
+ * @returns {string | null} - The parameter value or null.
  */
-function getStorageEngine (persist) {
-  // Check for window existence for SSR
-  if (typeof window === 'undefined') {
-    return null
-  }
-  if (persist === 'local') {
-    return window.localStorage
-  }
-  if (persist === 'session') {
-    return window.sessionStorage
-  }
-  return null
-}
-
-/**
- * Parses a specific URL parameter.
- * @param {string} paramName The name of the URL parameter.
- * @returns {string} The value of the parameter or a default value.
- */
-function getUrlParam (paramName) {
-  // Ensure this code can run in environments without `window` (like SSR)
-  if (typeof window === 'undefined') {
-    return `default-${paramName}`
-  }
+function getUrlParam (name) {
+  if (typeof window === 'undefined') return null
   const params = new URLSearchParams(window.location.search)
-  return params.get(paramName) || `default-${paramName}`
+  return params.get(name)
 }
 
 /**
- * Parses the window.location.pathname against a pattern string to extract scope.
- * @param {string} pattern e.g., "$1_docs_$2"
- * @returns {string} e.g., "users_abc"
+ * Parses the URL path based on a placeholder pattern.
+ * @param {string} pattern - The placeholder pattern (e.g., "$2_$4" or "user_$2").
+ * @returns {string | null} - The resolved string or null.
  */
 function parsePathScope (pattern) {
-  if (typeof window === 'undefined') {
-    return 'default-path-scope'
-  }
+  if (typeof window === 'undefined' || !pattern) return null
 
-  const pathnameSegments = window.location.pathname.split('/').filter(Boolean)
+  const pathSegments = window.location.pathname.split('/').filter(seg => seg)
+
+  let resolvedScope = pattern
+
   // Regex to find all placeholders like $1, $2, etc.
   const placeholderRegex = /\$(\d+)/g
 
-  let hasMatch = false
+  let match
+  while ((match = placeholderRegex.exec(pattern)) !== null) {
+    const placeholder = match[0] // e.g., "$1"
+    const index = parseInt(match[1], 10) - 1 // 1-indexed to 0-indexed
 
-  const scopeKey = pattern.replace(placeholderRegex, (match, numberStr) => {
-    hasMatch = true
-    const index = parseInt(numberStr, 10) - 1 // $1 -> index 0, $2 -> index 1
-
-    if (index >= 0 && index < pathnameSegments.length) {
-      return pathnameSegments[index]
-    }
-
-    // Handle cases where placeholder is valid but segment doesn't exist
-    // e.g., pattern "$1_$2" but URL is "/segment1" -> scope becomes "segment1_default"
-    return 'default'
-  })
-
-  if (!hasMatch) {
-    console.warn(
-      `useAdvancedState: 'scopeByUrlPath' pattern "${pattern}" did not contain any valid placeholders (e.g., $1, $2).`
-    )
-    // Default scope to prevent key collisions
-    return 'default-path-scope'
-  }
-
-  return scopeKey
-}
-
-/**
- * Generates the unique storage key based on the scope option.
- * The value stored at this key will be an *object* containing all properties
- * for that scope (e.g., { myProp1: 'a', myProp2: 'b' }).
- */
-function getScopedStorageKey (scopeByUrlParam, scopeByUrlPath) {
-  // Prioritize param-based scope if both are provided
-  if (scopeByUrlParam) {
-    const paramValue = getUrlParam(scopeByUrlParam)
-    return `advancedState:param:${scopeByUrlParam}:${paramValue}`
-  }
-
-  if (scopeByUrlPath) {
-    const pathScope = parsePathScope(scopeByUrlPath)
-    return `advancedState:path:${pathScope}`
-  }
-
-  // A fallback global scope if no scope is provided but 'persist' is
-  return 'advancedState:global'
-}
-
-/**
- * Reads a specific property's value from the scoped storage object.
- */
-function readFromStorage (storage, scopedKey, propKey) {
-  if (!storage) {
-    return undefined
-  }
-  try {
-    const rawValue = storage.getItem(scopedKey)
-    if (rawValue) {
-      const stateObject = JSON.parse(rawValue)
-      return stateObject[propKey]
-    }
-  } catch (error) {
-    console.error(`Error reading from storage: ${error}`)
-  }
-  return undefined
-}
-
-/**
- * Writes a specific property's value to the scoped storage object.
- */
-function writeToStorage (storage, scopedKey, propKey, value) {
-  if (!storage) {
-    return
-  }
-  try {
-    const rawValue = storage.getItem(scopedKey)
-    const stateObject = rawValue ? JSON.parse(rawValue) : {}
-
-    if (value === undefined || value === null) {
-      delete stateObject[propKey]
+    if (index >= 0 && index < pathSegments.length) {
+      resolvedScope = resolvedScope.replace(placeholder, pathSegments[index])
     } else {
-      stateObject[propKey] = value
+      // If placeholder is out of bounds, replace it with a default
+      console.warn(
+        `useAdvancedState: scopeByUrlPath placeholder ${placeholder} not found in URL path.`
+      )
+      resolvedScope = resolvedScope.replace(placeholder, 'default')
     }
+  }
 
-    storage.setItem(scopedKey, JSON.stringify(stateObject))
-  } catch (error) {
-    console.error(`Error writing to storage: ${error}`)
+  return resolvedScope
+}
+
+/**
+ * Creates the unique storage key based on scope.
+ * @param {string} key - The base key.
+ * @param {string} persist - 'local' or 'session'.
+ * @param {string} scopeByUrlParam - The URL param name.
+ * @param {string} scopeByUrlPath - The URL path pattern.
+ * @returns {string} - The final, unique key.
+ */
+function getScopedStorageKey (key, persist, scopeByUrlParam, scopeByUrlPath) {
+  let scope = ''
+
+  if (scopeByUrlParam) {
+    const paramValue =
+      getUrlParam(scopeByUrlParam) || `default-${scopeByUrlParam}`
+    scope = `param:${scopeByUrlParam}:${paramValue}`
+  } else if (scopeByUrlPath) {
+    const pathScope = parsePathScope(scopeByUrlPath) || 'default-path-scope'
+    scope = `path:${pathScope}`
+  }
+
+  // Use a different prefix for session vs local to avoid collisions
+  const persistPrefix = persist === 'session' ? 'advStateS' : 'advStateL'
+
+  return scope ? `${persistPrefix}:${scope}:${key}` : `${persistPrefix}:${key}`
+}
+
+/**
+ * Reads a value from the appropriate storage.
+ * @param {string} storageKey - The key to read from.
+ * @param {string} persist - 'local' or 'session'.
+ * @returns {any} - The parsed value or null.
+ */
+function readFromStorage (storageKey, persist) {
+  if (typeof window === 'undefined') return null
+
+  try {
+    const storage = persist === 'local' ? localStorage : sessionStorage
+    const item = storage.getItem(storageKey)
+    return item ? JSON.parse(item) : null
+  } catch (e) {
+    console.error('Failed to read from storage:', e)
+    return null
   }
 }
 
-// --- 4. The Main Hook: useAdvancedState ---
+// --- The Hook ---
 
 /**
- * A custom hook that extends useState with optional debouncing,
- * persistence (local/session storage), and notification.
- *
- * @param {string} key The unique key for this piece of state.
- * @param {object} options
- * @param {*} [options.initial] The initial value if nothing is found in storage.
- * @param {number} [options.debounce=0] Debounce time in ms for setting the value.
- * @param {'local' | 'session'} [options.persist] Persistence strategy.
- * @param {'cross-component' | 'cross-tab' | 'cross-component-and-tab'} [options.notify] Notification strategy.
- * @param {string} [options.scopeByUrlParam] A URL parameter name to scope storage by. Mutually exclusive with `scopeByUrlPath`.
- * @param {string} [options.scopeByUrlPath] A path pattern (e.g., `"$1_docs_$2"`) to scope storage by. Mutually exclusive with `scopeByUrlParam`.
- * @returns {[*, Function]} A [value, setValue] tuple.
+ * @typedef {object} AdvancedStateOptions
+ * @property {any} [initial] - Initial value if none is found.
+ * @property {number} [debounce] - Time in ms to debounce persistence and notifications.
+ * @property {'local' | 'session'} [persist] - Persistence strategy.
+ * @property {'cross-component' | 'cross-tab' | 'cross-component-and-tab'} [notify] - Notification strategy.
+ * @property {string} [scopeByUrlParam] - URL parameter name to scope storage.
+ * @property {string} [scopeByUrlPath] - URL path pattern to scope storage.
  */
-export const useAdvancedState = (key, options = {}) => {
-  const {
-    initial,
-    debounce = 0,
+
+/**
+ * A powerful React hook that extends useState with persistence, debouncing,
+ * and advanced cross-component/cross-tab state synchronization.
+ *
+ * @param {string} key - A unique key for the state.
+ * @param {AdvancedStateOptions} [options] - Configuration options.
+ * @returns {[any, (value: any | ((prev: any) => any)) => void]}
+ */
+export function useAdvancedState (
+  key,
+  {
+    initial = undefined,
+    debounce: debounceTime = 0,
     persist,
     notify,
     scopeByUrlParam,
-    scopeByUrlPath // New
-  } = options
-
-  // --- A. Setup and Refs ---
-
-  // Get the global store instance from context.
-  // This will be null if AdvancedStateProvider is not used.
+    scopeByUrlPath
+  } = {}
+) {
   const store = useContext(AdvancedStateContext)
 
-  // Ref to hold the debounce timeout
-  const debounceTimeoutRef = useRef(null)
+  // Helper to get the initial value from all sources
+  const getInitialValue = useCallback(() => {
+    // 1. Check context store (for cross-component)
+    if (store) {
+      const contextValue = store.getState(key)
+      if (contextValue !== undefined) return contextValue
+    }
 
-  // Memoize storage engine and scoped key calculation
-  const storage = useMemo(() => getStorageEngine(persist), [persist])
-  const scopedStorageKey = useMemo(
-    () => getScopedStorageKey(scopeByUrlParam, scopeByUrlPath),
-    [scopeByUrlParam, scopeByUrlPath]
-  ) // Updated
-
-  // Check for configuration errors
-  useEffect(() => {
-    if (scopeByUrlParam && scopeByUrlPath) {
-      console.warn(
-        `useAdvancedState: 'scopeByUrlParam' and 'scopeByUrlPath' were both provided for key "${key}". 'scopeByUrlParam' will be used. Please provide only one scope option.`
+    // 2. Check storage (for persist)
+    if (persist) {
+      const storageKey = getScopedStorageKey(
+        key,
+        persist,
+        scopeByUrlParam,
+        scopeByUrlPath
       )
-    }
-
-    if (
-      (notify === 'cross-component' || notify === 'cross-component-and-tab') &&
-      !store
-    ) {
-      console.warn(
-        `useAdvancedState: 'notify: "${notify}"' was used for key "${key}" but no <AdvancedStateProvider> was found. Context notification will not work.`
-      )
-    }
-    if (
-      (notify === 'cross-tab' || notify === 'cross-component-and-tab') &&
-      !storage
-    ) {
-      console.warn(
-        `useAdvancedState: 'notify: "${notify}"' was used for key "${key}" but no 'persist' option was provided. Cross-tab notification requires 'persist: "local" | "session"'.`
-      )
-    }
-  }, [notify, store, key, storage, scopeByUrlParam, scopeByUrlPath]) // Added dependencies
-
-  // --- B. State Initialization ---
-
-  // We use a lazy initializer for useState to read the initial value.
-  // This logic runs *only once* on component mount.
-  // Priority:
-  // 1. Value already in Context Store (if notify includes 'cross-component')
-  // 2. Value in specified Storage (if persist: 'local' | 'session')
-  // 3. `options.initial`
-  const [value, setValue] = useState(() => {
-    let initialValue = initial // Default
-
-    // 1. Check Context
-    if (
-      (notify === 'cross-component' || notify === 'cross-component-and-tab') &&
-      store?.get(key) !== undefined
-    ) {
-      initialValue = store.get(key)
-    }
-    // 2. Check Storage
-    else if (storage) {
-      const storedValue = readFromStorage(storage, scopedStorageKey, key)
-      if (storedValue !== undefined) {
-        initialValue = storedValue
+      const storedValue = readFromStorage(storageKey, persist)
+      if (storedValue !== null) {
+        // Also update context store if this is the first load
+        if (store) {
+          store.setState(key, storedValue)
+        }
+        return storedValue
       }
     }
 
-    // If we're using context and the store is uninitialized for this key,
-    // let's populate it.
+    // 3. Use initial value
+    if (initial !== undefined) {
+      // Set initial value in context store if this is the first load
+      if (store) {
+        store.setState(key, initial)
+      }
+    }
+    return initial
+  }, [key, persist, scopeByUrlParam, scopeByUrlPath, store])
+  // We intentionally omit `initial` from deps so it only runs on first mount
+
+  // This state is updated *immediately* for UI responsiveness
+  const [localValue, setLocalValue] = useState(getInitialValue)
+
+  // --- START: Syncing Logic (Persistence & Notification) ---
+
+  // This function contains the logic to persist and notify
+  const syncState = useCallback(
+    newValue => {
+      // 1. Notify context (if configured)
+      if (
+        notify === 'cross-component' ||
+        notify === 'cross-component-and-tab'
+      ) {
+        if (store) {
+          store.setState(key, newValue)
+        } else {
+          console.warn(
+            'useAdvancedState: "notify" is set to "cross-component" but no <AdvancedStateProvider> was found.'
+          )
+        }
+      }
+
+      // 2. Handle Persistence & Cross-Tab Notification
+      if (!persist) {
+        return // No persistence, so we're done.
+      }
+
+      const storageKey = getScopedStorageKey(
+        key,
+        persist,
+        scopeByUrlParam,
+        scopeByUrlPath
+      )
+
+      const storage = persist === 'local' ? localStorage : sessionStorage
+
+      if (
+        (notify === 'cross-tab' || notify === 'cross-component-and-tab') &&
+        persist !== 'local'
+      ) {
+        console.warn(
+          `useAdvancedState: 'notify: "${notify}"' relies on 'localStorage' for cross-tab events. Using 'persist: "session"' may not notify other tabs.`
+        )
+      }
+
+      try {
+        storage.setItem(storageKey, JSON.stringify(newValue))
+      } catch (e) {
+        console.error(`Failed to persist state to ${persist}Storage:`, e)
+      }
+    },
+    [key, persist, notify, scopeByUrlParam, scopeByUrlPath, store]
+  )
+
+  // Create a memoized debounced function for syncing
+  const debouncedSync = useMemo(
+    () => debounce(syncState, debounceTime),
+    [syncState, debounceTime]
+  )
+
+  // This is the setter function returned to the user
+  const setFn = useCallback(
+    valueOrFn => {
+      // We move all logic inside setLocalValue's functional update
+      // to get the latest state and ensure stable setter identity.
+      setLocalValue(currentValue => {
+        // 1. Get new value
+        const newValue =
+          typeof valueOrFn === 'function' ? valueOrFn(currentValue) : valueOrFn
+
+        // 2. Call sync function (debounced or not)
+        if (debounceTime > 0) {
+          debouncedSync(newValue)
+        } else {
+          syncState(newValue)
+        }
+
+        // 3. Return new value to update local state
+        return newValue
+      })
+    },
+    [debounceTime, debouncedSync, syncState] // No localValue dependency!
+  )
+
+  // --- END: Syncing Logic ---
+
+  // --- START: Event Listeners for External Updates ---
+
+  // Effect for Storage Events (other tabs)
+  useEffect(() => {
     if (
-      (notify === 'cross-component' || notify === 'cross-component-and-tab') &&
-      store?.get(key) === undefined
+      typeof window === 'undefined' ||
+      !persist ||
+      !(notify === 'cross-tab' || notify === 'cross-component-and-tab')
     ) {
-      store.set(key, initialValue)
+      return
     }
 
-    return initialValue
-  })
+    const storageKey = getScopedStorageKey(
+      key,
+      persist,
+      scopeByUrlParam,
+      scopeByUrlPath
+    )
 
-  // --- C. Cross-Component Notification Effects ---
-
-  useEffect(() => {
-    let contextUnsubscribe = () => {}
-    let eventUnsubscribe = () => {}
-
-    // 1. `notify: 'cross-component'` or 'cross-component-and-tab'
-    // Subscribe to the global store for changes to *this key*
-    if (
-      (notify === 'cross-component' || notify === 'cross-component-and-tab') &&
-      store
-    ) {
-      contextUnsubscribe = store.subscribe(key, () => {
-        const storeValue = store.get(key)
-        // Update local state *only if* it differs from the store
-        // This check prevents an infinite loop if `setValue` also writes to the store
-        setValue(prevValue => {
-          if (prevValue !== storeValue) {
-            return storeValue
+    const handleStorageChange = event => {
+      if (event.key === storageKey && event.newValue) {
+        try {
+          const newValue = JSON.parse(event.newValue)
+          setLocalValue(newValue) // Update local state
+          // Also update context store for other components in this tab
+          if (
+            store &&
+            notify === 'cross-component-and-tab' &&
+            store.getState(key) !== newValue
+          ) {
+            store.setState(key, newValue)
           }
-          return prevValue
-        })
+        } catch (e) {
+          console.error('Failed to parse storage event value:', e)
+        }
+      }
+    }
+
+    window.addEventListener('storage', handleStorageChange)
+    return () => {
+      window.removeEventListener('storage', handleStorageChange)
+    }
+  }, [key, persist, notify, scopeByUrlParam, scopeByUrlPath, store])
+
+  // Effect for Context Events (other components, same tab)
+  useEffect(() => {
+    if (
+      !store ||
+      !(notify === 'cross-component' || notify === 'cross-component-and-tab')
+    ) {
+      return
+    }
+
+    const handleContextChange = newValue => {
+      // Only update if the value is actually different
+      setLocalValue(currentValue => {
+        if (currentValue !== newValue) {
+          return newValue
+        }
+        return currentValue
       })
     }
 
-    // 2. `notify: 'cross-tab'` or 'cross-component-and-tab'
-    // Subscribe to the window 'storage' event for cross-tab communication
-    if (
-      (notify === 'cross-tab' || notify === 'cross-component-and-tab') &&
-      storage
-    ) {
-      const handleStorageEvent = event => {
-        // Check for window existence for SSR
-        if (typeof window === 'undefined') {
-          return
-        }
-        // Check if the event is for our storage engine and our scoped key
-        if (event.storageArea === storage && event.key === scopedStorageKey) {
-          try {
-            const newStateObject = JSON.parse(event.newValue)
-            const newValue = newStateObject ? newStateObject[key] : undefined
-
-            // Update local state if the value has changed
-            setValue(prevValue => {
-              if (newValue !== prevValue) {
-                // IMPORTANT: If we're also notifying context, update the store.
-                // This propagates the cross-tab change to other components
-                // in *this* tab.
-                if (
-                  (notify === 'cross-component' ||
-                    notify === 'cross-component-and-tab') &&
-                  store
-                ) {
-                  store.set(key, newValue)
-                }
-                return newValue
-              }
-              return prevValue
-            })
-          } catch (error) {
-            console.error(`Error handling storage event: ${error}`)
-          }
-        }
-      }
-
-      window.addEventListener('storage', handleStorageEvent)
-      // Set up the unsubscribe function to remove this listener
-      eventUnsubscribe = () => {
-        window.removeEventListener('storage', handleStorageEvent)
-      }
-    }
-
-    // Cleanup function:
-    // This will be called when the component unmounts
+    const unsubscribe = store.subscribe(key, handleContextChange)
     return () => {
-      contextUnsubscribe()
-      eventUnsubscribe()
+      unsubscribe()
     }
-  }, [key, notify, store, storage, scopedStorageKey])
+  }, [key, store, notify])
 
-  // --- D/E. The Setter Function (with Debounce logic) ---
+  // --- END: Event Listeners ---
 
-  const setFn = useCallback(
-    newValueOrFn => {
-      // Resolve the new value if a function is passed (like in setState)
-      const newValue =
-        typeof newValueOrFn === 'function' ? newValueOrFn(value) : newValueOrFn
+  // --- START: Lifecycle & Warnings ---
 
-      // This is the "real" update logic
-      const update = val => {
-        // 1. Update local state
-        setValue(val)
-
-        // 2. Persist to storage (if configured)
-        writeToStorage(storage, scopedStorageKey, key, val)
-
-        // 3. Notify context (if configured)
-        if (
-          (notify === 'cross-component' ||
-            notify === 'cross-component-and-tab') &&
-          store
-        ) {
-          store.set(key, val)
-        }
+  // On mount, re-check value. This handles race conditions if another
+  // tab/component updated state *after* initial render but *before*
+  // effects ran.
+  useEffect(() => {
+    const freshValue = getInitialValue()
+    setLocalValue(currentValue => {
+      if (currentValue !== freshValue) {
+        return freshValue
       }
+      return currentValue
+    })
+  }, [getInitialValue])
 
-      // If debounce is enabled, use the timeout
-      if (debounce > 0) {
-        if (debounceTimeoutRef.current) {
-          clearTimeout(debounceTimeoutRef.current)
-        }
-        debounceTimeoutRef.current = setTimeout(() => {
-          update(newValue)
-        }, debounce)
-      } else {
-        // Otherwise, update immediately
-        update(newValue)
-      }
-    },
-    [value, storage, scopedStorageKey, key, notify, store, debounce]
-  )
+  // Warn if scoping is used without persistence
+  useEffect(() => {
+    if ((scopeByUrlParam || scopeByUrlPath) && !persist) {
+      console.warn(
+        'useAdvancedState: "scopeByUrlParam" or "scopeByUrlPath" is used without the "persist" option. Scoping will have no effect.'
+      )
+    }
+    if (scopeByUrlParam && scopeByUrlPath) {
+      console.warn(
+        'useAdvancedState: "scopeByUrlParam" and "scopeByUrlPath" are mutually exclusive. "scopeByUrlParam" will take precedence.'
+      )
+    }
+  }, [scopeByUrlParam, scopeByUrlPath, persist])
 
-  // --- F. Return Value ---
-
-  // Return the current value and the (potentially debounced) setter function
-  return [value, setFn]
+  return [localValue, setFn]
 }

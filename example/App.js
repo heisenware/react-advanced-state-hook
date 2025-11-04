@@ -1,5 +1,6 @@
 import React from 'react'
-import { useAdvancedState } from './useAdvancedState' // Adjust this path if needed
+// Adjust this import path to where your hook file is located
+import { useAdvancedState } from './useAdvancedState'
 
 // --- STYLING ---
 // Just some simple styling to make the demo clear.
@@ -65,14 +66,16 @@ function ComponentA () {
     persist: 'local',
     notify: 'cross-component-and-tab',
     scopeByUrlParam: 'appId', // Try visiting ?appId=app1
-    debounce: 300 // Debounce this input
+    debounce: 300 // Debounce persistence & notifications
   })
 
   return (
     <div style={styles.componentBox}>
       <h3 style={styles.h3}>Component A</h3>
       <p style={styles.p}>
-        This component uses a <strong>300ms debounce</strong>.
+        This component's <strong>UI updates instantly</strong>.
+        <br />
+        Persistence and sync are <strong>debounced by 300ms</strong>.
       </p>
       <input
         style={styles.input}
@@ -131,18 +134,24 @@ export default function App () {
         <h3 style={styles.h3}>How to Test:</h3>
         <ol style={styles.instructionList}>
           <li style={styles.li}>
-            <strong>Test Cross-Component Sync:</strong> Type in either input
-            box. The other box should update in real-time. (Note Component A's
-            debounce).
+            <strong>Test Instant Local State:</strong> Type in the "Component A"
+            input. You'll see its own "Current Value" update immediately.
           </li>
           <li style={styles.li}>
-            <strong>Test Persistence:</strong> Type a new value, then{' '}
-            <strong>reload the page</strong>. The value should still be there.
+            <strong>Test Debounced Sync:</strong> Type in "Component A". You'll
+            see "Component B" only updates *after* you stop typing for 300ms.
+            This is the debounced notification.
+          </li>
+          <li style={styles.li}>
+            <strong>Test Persistence:</strong> Type a new value, wait 300ms,
+            then <strong>reload the page</strong>. The value should still be
+            there.
           </li>
           <li style={styles.li}>
             <strong>Test Cross-Tab Sync:</strong>{' '}
             <strong>Open this page in a new browser tab</strong> (with the same
-            URL). Type in one tab and watch the other tab update.
+            URL). Type in one tab and watch the other tab update (with a
+            debounce if you type in Component A).
           </li>
           <li style={styles.li}>
             <strong>Test Scoping:</strong>
@@ -150,13 +159,12 @@ export default function App () {
             a. Change the URL to add{' '}
             <code style={styles.code}>?appId=app1</code>.
             <br />
-            b. Type a new value (e.g., "This is App 1").
+            b. Type a new value (e.g., "This is App 1") and wait 300ms.
             <br />
             c. Now, change the URL to{' '}
             <code style={styles.code}>?appId=app2</code>.
             <br />
-            d. The value should reset to the initial "Hello!" (or whatever was
-            saved for "app2"). If you go back to{' '}
+            d. The value should reset to the initial "Hello!". If you go back to{' '}
             <code style={styles.code}>?appId=app1</code>, your "This is App 1"
             value will re-appear.
           </li>

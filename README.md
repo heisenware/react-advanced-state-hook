@@ -3,7 +3,7 @@
 A powerful React hook that extends useState with optional persistence, debouncing, and advanced cross-component/cross-tab state synchronization.
 
 - Persist State: Save state to localStorage or sessionStorage.
-- Debounce Updates: Automatically debounce state setters.
+- Debounce Updates: Automatically debounce state persistence and notifications. Local state updates are immediate!
 - Cross-Component Sync: Share state between components without prop drilling (similar to Zustand).
 - Cross-Tab Sync: Share state between different browser tabs.
 - Scoped Storage: Automatically scope persisted state to URL parameters (like appId) or URL path segments (like `$1-$2`).
@@ -104,7 +104,7 @@ To run it:
 
 2. Set up a simple React project (using Vite, Next.js, or `create-react-app`).
 
-3. Inside your test project's src folder, copy the `useAdvancedState.js` file (or `src/index.js`) from this library.
+3. Inside your test project's src folder, copy the `src/index.js` (from this library) to `useAdvancedState.js`.
 
 4. Copy the `example/App.js` and `example/index.js` files into your test project's src folder (you can overwrite the existing `App.js` and `index.js`).
 
@@ -121,7 +121,7 @@ The example app will open in your browser, and you can follow the on-screen inst
 - `key` (string): **Required**. A unique string key to identify this piece of state.
 - `options` (object): An optional configuration object.
   - `initial` (any): The initial value to use if no value is found in storage.
-  - `debounce` (number): Time in milliseconds to debounce the `setValue` function. Defaults to `0` (no debounce).
+  - `debounce` (number): Time in milliseconds to debounce persistence and notifications. Local state (UI) updates are always immediate. Defaults to `0` (no debounce).
   - `persist` (`'local'` | `'session'`): The persistence strategy.
     - `'local'`: Persist to localStorage.
     - `'session'`: Persist to sessionStorage.
