@@ -8,8 +8,6 @@ import React, {
 } from 'react'
 
 // --- Internal Pub/Sub Store (Zustand-like) ---
-// This creates a lightweight, in-memory store to notify components.
-
 /**
  * Creates a simple pub/sub store for cross-component communication.
  * @returns {{subscribe: Function, publish: Function}}
@@ -17,58 +15,25 @@ import React, {
 function createStore () {
   const subscribers = new Set()
   return {
-    /**
-     * @param {Function} callback
-     * @returns {Function} Unsubscribe function
-     */
-    subscribe (callback) {
+    subscribe: callback => {
       subscribers.add(callback)
-      return () => {
-        subscribers.delete(callback)
-      }
+      return () => subscribers.delete(callback)
     },
-    /**
-     * @param {string} key
-     * @param {*} value
-     */
-    publish (key, value) {
-      subscribers.forEach(callback => callback(key, value))
+    publish: (key, value) => {
+      for (const callback of subscribers) {
+        callback(key, value)
+      }
     }
   }
 }
 
 // --- React Context ---
-// This holds the store and the user-defined prefix.
+// This holds the store, the user-defined prefix, and the new defaults map.
 const AdvancedStateContext = React.createContext({
   store: createStore(),
-  prefix: 'advState'
+  prefix: 'advState',
+  defaultsMap: new Map()
 })
-
-/**
- * Provider component that enables 'cross-component' notifications.
- * @param {object} props
- * @param {React.ReactNode} props.children
- * @param {string} [props.prefix] - A custom prefix for all storage keys. Defaults to 'advState'.
- */
-export function AdvancedStateProvider ({ children, prefix = 'advState' }) {
-  // We use useMemo to ensure the store and prefix value are stable and
-  // don't cause unnecessary re-renders in consumers.
-  const contextValue = useMemo(
-    () => ({
-      store: createStore(),
-      prefix
-    }),
-    [prefix]
-  )
-
-  return (
-    <AdvancedStateContext.Provider value={contextValue}>
-      {children}
-    </AdvancedStateContext.Provider>
-  )
-}
-
-// --- Helper Functions ---
 
 /**
  * Gets a URL parameter by name.
@@ -82,29 +47,23 @@ function getUrlParam (name) {
 }
 
 /**
- * Parses the URL path based on a pattern.
- * @param {string} pattern - e.g., "$1_$3"
+ * Parses the URL path based on a string-replacement pattern.
+ * @param {string} pattern - e.g., "$1_$3" or "user_$1"
  * @returns {string | null}
  */
 function parsePathScope (pattern) {
-  if (typeof window === 'undefined') return null
-  const path = window.location.pathname
-  // Split path into segments, remove leading/trailing empty strings
-  const segments = path.split('/').filter(Boolean)
+  if (typeof window === 'undefined' || !pattern) return null
 
-  let scope = pattern
-  const placeholders = pattern.match(/\$\d/g) || []
+  // Get path segments, filter out empty strings
+  const pathSegments = window.location.pathname.split('/').filter(Boolean)
 
-  for (const placeholder of placeholders) {
-    const index = parseInt(placeholder.substring(1), 10) - 1 // $1 -> index 0
-    const value = segments[index] || ''
-    scope = scope.replace(placeholder, value)
-  }
+  // Replace placeholders like $1, $2 with path segments
+  const scope = pattern.replace(/\$(\d+)/g, (match, index) => {
+    const i = parseInt(index, 10) - 1 // $1 is index 0
+    return pathSegments[i] || ''
+  })
 
-  // If no placeholders were replaced, or scope is empty, return null
-  if (scope === pattern && placeholders.length > 0) return null
   if (scope === '') return null
-
   return scope
 }
 
@@ -112,23 +71,102 @@ function parsePathScope (pattern) {
  * Creates the final storage key based on scope.
  * Format: "<prefix>:<scopeValue>:<key>"
  * @param {string} prefix - The global prefix (e.g., 'advState' or 'myApp')
- * @param {string} [scopeByUrlParam] - e.g., 'appId'
- * @param {string} [scopeByUrlPath] - e.g., '$1_$3'
+ * @param {string} [scopeByUrlParam] - The URL param name.
+ * @param {string} [scopeByUrlPath] - The URL path pattern.
  * @param {string} key - The property key (e.g., 'username')
  * @returns {string}
  */
 function getScopedStorageKey (prefix, scopeByUrlParam, scopeByUrlPath, key) {
-  let scope = ''
-
+  let scope = null
   if (scopeByUrlParam) {
-    scope = getUrlParam(scopeByUrlParam) || `default-${scopeByUrlParam}`
+    scope = getUrlParam(scopeByUrlParam) || 'default-param'
   } else if (scopeByUrlPath) {
     scope = parsePathScope(scopeByUrlPath) || 'default-path'
   }
 
-  // Use filter(Boolean) to remove empty parts
+  // Use filter(Boolean) to remove empty parts (e.g., if no scope)
   return [prefix, scope, key].filter(Boolean).join(':')
 }
+
+/**
+ * Provider component that enables 'cross-component' notifications
+ * and centralized state configuration.
+ *
+ * @param {object} props
+ * @param {React.ReactNode} props.children
+ * @param {string} [props.prefix='advState'] - A custom prefix for all storage keys.
+ * @param {Array<object>} [props.defaults=[]] - An array of default configurations for keys.
+ * @returns {React.ReactElement}
+ */
+export function AdvancedStateProvider ({
+  children,
+  prefix = 'advState',
+  defaults = []
+}) {
+  // We use useMemo to ensure the store and prefix value are stable and
+  // don't cause unnecessary re-renders in consumers.
+  // The defaultsMap is created for O(1) lookups in the hook.
+  const contextValue = useMemo(() => {
+    const defaultsMap = new Map()
+    for (const item of defaults) {
+      if (item.key) {
+        defaultsMap.set(item.key, item)
+      }
+    }
+    return {
+      store: createStore(),
+      prefix,
+      defaultsMap
+    }
+  }, [prefix, defaults])
+
+  // --- Eager Initialization ---
+  // On mount, loop through defaults and "pre-warm" storage for the
+  // *current* URL scope, if storage is empty.
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+
+    for (const item of defaults) {
+      const { key, initial, persist, scopeByUrlParam, scopeByUrlPath } = item
+
+      // Only initialize items that are persistent and have an initial value
+      if (!persist || initial === undefined || !key) {
+        continue
+      }
+
+      try {
+        const storageKey = getScopedStorageKey(
+          prefix,
+          scopeByUrlParam,
+          scopeByUrlPath,
+          key
+        )
+        const storage = persist === 'local' ? localStorage : sessionStorage
+        const storageValue = storage.getItem(storageKey)
+
+        // If storage is empty for this key, set the initial value
+        if (storageValue === null) {
+          storage.setItem(storageKey, JSON.stringify(initial))
+        }
+      } catch (e) {
+        console.error(
+          `[AdvancedState] Failed to initialize default for key "${key}":`,
+          e
+        )
+      }
+    }
+    // This effect runs only once on provider mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefix, defaults]) // Rerunning if defaults prop changes is complex, so we run once.
+
+  return (
+    <AdvancedStateContext.Provider value={contextValue}>
+      {children}
+    </AdvancedStateContext.Provider>
+  )
+}
+
+// --- Helper Functions ---
 
 /**
  * A simple debounce function.
@@ -137,7 +175,7 @@ function getScopedStorageKey (prefix, scopeByUrlParam, scopeByUrlPath, key) {
  * @returns {Function}
  */
 function debounce (func, delay) {
-  let timeoutId
+  let timeoutId = null
   return function (...args) {
     const context = this
     clearTimeout(timeoutId)
@@ -149,59 +187,66 @@ function debounce (func, delay) {
  * The main hook for advanced state management.
  *
  * @template T
- * @param {string} key - The unique key for the state.
- * @param {object} [options]
+ * @param {string} key - The unique key for this piece of state.
+ * @param {object} [options={}] - Local options to override defaults.
  * @param {T} [options.initial] - The initial value.
- * @param {number} [options.debounce] - Debounce delay in ms for persistence/notification.
- * @param {'local' | 'session'} [options.persist] - Persist to localStorage or sessionStorage.
- * @param {'cross-component' | 'cross-tab' | 'cross-component-and-tab'} [options.notify] - Notification strategy.
- * @param {string} [options.scopeByUrlParam] - Scope storage key by a URL parameter (e.g., 'appId').
+ * @param {number} [options.debounce] - Debounce delay in ms.
+ * @param {'local' | 'session'} [options.persist] - Persistence target.
+ * @param {'cross-component' | 'cross-tab' | 'cross-component-and-tab'} [options.notify] - Sync strategy.
+ * @param {string} [options.scopeByUrlParam] - Scope storage key by URL parameter.
  * @param {string} [options.scopeByUrlPath] - Scope storage key by URL path segments (e.g., '$1_$3').
  * @returns {[T, (value: T | ((prev: T) => T)) => void]}
  */
 export function useAdvancedState (key, options = {}) {
+  // Get store, prefix, and defaults from context
+  const { store, prefix, defaultsMap } = useContext(AdvancedStateContext)
+
+  // --- Options Merging ---
+  // Merge the provider defaults with the local options.
+  // Local options always win.
+  const mergedOptions = useMemo(() => {
+    const defaultOptions = defaultsMap.get(key) || {}
+    return { ...defaultOptions, ...options }
+  }, [defaultsMap, key, options])
+
+  // Deconstruct the *merged* options
   const {
     initial,
-    debounce: debounceDelay = 0,
     persist,
     notify,
+    debounce: debounceDelay = 0,
     scopeByUrlParam,
     scopeByUrlPath
-  } = options
-
-  // Get store and prefix from context
-  const { store, prefix } = useContext(AdvancedStateContext)
+  } = mergedOptions
 
   // --- State Initialization ---
 
-  // useRefs to hold the debounced function and options
-  // This ensures they are stable and don't change on re-render
   const debouncedSync = useRef(null)
 
-  // Get the scoped storage key (will be stable if args are stable)
-  const storageKey = getScopedStorageKey(
-    prefix,
-    scopeByUrlParam,
-    scopeByUrlPath,
-    key
+  // Get the scoped storage key
+  const storageKey = useMemo(
+    () => getScopedStorageKey(prefix, scopeByUrlParam, scopeByUrlPath, key),
+    [prefix, scopeByUrlParam, scopeByUrlPath, key]
   )
 
   /**
-   * Safely gets the initial value from storage, context, or default.
+   * Safely gets the initial value from storage or default.
    * This is a "lazy" initializer for useState, so it only runs once.
    */
   const getInitialValue = () => {
-    // 1. Try to get from storage if persist is enabled
+    // 1. Check storage first
     if (persist && typeof window !== 'undefined') {
-      const storage = persist === 'local' ? localStorage : sessionStorage
-      const storageValue = storage.getItem(storageKey)
-      if (storageValue !== null) {
-        try {
+      try {
+        const storage = persist === 'local' ? localStorage : sessionStorage
+        const storageValue = storage.getItem(storageKey)
+        if (storageValue !== null) {
           return JSON.parse(storageValue)
-        } catch (e) {
-          console.error(`Failed to parse stored value for ${key}:`, e)
-          return initial
         }
+      } catch (e) {
+        console.error(
+          `[AdvancedState] Failed to parse stored value for ${key}:`,
+          e
+        )
       }
     }
     // 2. If not in storage, return the default initial value
@@ -210,12 +255,12 @@ export function useAdvancedState (key, options = {}) {
 
   const [localValue, setLocalValue] = useState(getInitialValue)
 
-  // --- Eager Write Effect ---
-  // This effect runs once on mount to write the initial value
-  // to storage if storage is currently empty.
+  // --- Eager Write Effect (Hook-level) ---
+  // This effect ensures that if we navigate to a *new* scope
+  // (one that the provider didn't initialize), we still
+  // eagerly write the initial value.
   useEffect(() => {
-    // Only run if we are persisting and the initial value is defined
-    if (!persist || initial === undefined) {
+    if (!persist || initial === undefined || typeof window === 'undefined') {
       return
     }
 
@@ -224,26 +269,34 @@ export function useAdvancedState (key, options = {}) {
 
     // If storage is empty, write the initial value
     if (storageValue === null) {
-      const valueToStore = JSON.stringify(initial)
-      storage.setItem(storageKey, valueToStore)
+      try {
+        const valueToStore = JSON.stringify(initial)
+        storage.setItem(storageKey, valueToStore)
 
-      // Notify if requested
-      if (notify === 'cross-tab' || notify === 'cross-component-and-tab') {
-        const otherStorage = persist === 'local' ? sessionStorage : localStorage
-        otherStorage.setItem(storageKey, valueToStore)
-        otherStorage.removeItem(storageKey)
-      }
-      if (
-        notify === 'cross-component' ||
-        notify === 'cross-component-and-tab'
-      ) {
-        store.publish(key, initial)
+        // Notify if requested
+        if (notify === 'cross-tab' || notify === 'cross-component-and-tab') {
+          const otherStorage =
+            persist === 'local' ? sessionStorage : localStorage
+          // This "signal" write triggers the event
+          otherStorage.setItem(storageKey, valueToStore)
+          otherStorage.removeItem(storageKey)
+        }
+        if (
+          notify === 'cross-component' ||
+          notify === 'cross-component-and-tab'
+        ) {
+          store.publish(key, initial)
+        }
+      } catch (e) {
+        console.error(
+          `[AdvancedState] Failed to eager-write value for ${key}:`,
+          e
+        )
       }
     }
-    // Don't add dependencies; this should *only* run once on mount.
-    // We use the values as they were at mount time.
+    // This effect must re-run if the storageKey changes (e.g., URL navigation)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [storageKey, persist, initial, notify, key, store])
 
   // --- Synchronization Logic ---
 
@@ -269,7 +322,7 @@ export function useAdvancedState (key, options = {}) {
             otherStorage.removeItem(storageKey) // Clean up immediately
           }
         } catch (e) {
-          console.error(`Failed to save value for ${key}:`, e)
+          console.error(`[AdvancedState] Failed to save value for ${key}:`, e)
         }
       }
 
@@ -282,7 +335,7 @@ export function useAdvancedState (key, options = {}) {
       }
     },
     [persist, storageKey, notify, key, store]
-  ) // Added dependencies
+  )
 
   // Create or update the debounced function
   // This effect runs when performSync or debounceDelay changes
@@ -309,6 +362,7 @@ export function useAdvancedState (key, options = {}) {
   useEffect(() => {
     if (
       (notify === 'cross-tab' || notify === 'cross-component-and-tab') &&
+      persist &&
       typeof window !== 'undefined'
     ) {
       const handleStorageChange = event => {
@@ -324,7 +378,10 @@ export function useAdvancedState (key, options = {}) {
               store.publish(key, newValue)
             }
           } catch (e) {
-            console.error(`Failed to parse stored value for ${key}:`, e)
+            console.error(
+              `[AdvancedState] Failed to parse stored value for ${key}:`,
+              e
+            )
           }
         }
       }
@@ -350,13 +407,15 @@ export function useAdvancedState (key, options = {}) {
           typeof valueOrFn === 'function' ? valueOrFn(prevValue) : valueOrFn
 
         // Trigger the (debounced) sync with the new value
-        debouncedSync.current(newValue)
+        if (debouncedSync.current) {
+          debouncedSync.current(newValue)
+        }
 
         // Return the new value for the immediate local state update
         return newValue
       })
     },
-    [setLocalValue] // setLocalValue and debouncedSync.current are stable
+    [setLocalValue] // setLocalValue is stable
   )
 
   return [localValue, setFn]

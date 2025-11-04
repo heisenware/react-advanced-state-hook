@@ -1,25 +1,40 @@
 import React from 'react'
-import { createRoot } from 'react-dom/client'
+import ReactDOM from 'react-dom'
 import App from './App'
-// Adjust this import path to where your hook file is located
-import { AdvancedStateProvider } from './useAdvancedState'
+import { AdvancedStateProvider } from '../src/index.jsx' // Adjust path if needed
 
-// 1. Get the root element
-const container = document.getElementById('root')
+// --- Centralized State Definition ---
+// This is the recommended way to define all persistent state.
+const appStateDefaults = [
+  {
+    key: 'username',
+    initial: 'Guest',
+    persist: 'local',
+    scopeByUrlParam: 'appId' // Scoped to ?appId=...
+  },
+  {
+    key: 'theme',
+    initial: 'light',
+    persist: 'local' // Global, not scoped
+  },
+  {
+    key: 'notes',
+    initial: '',
+    persist: 'session',
+    scopeByUrlPath: 'doc_$1' // Scoped to /doc/...
+  }
+]
+// -------------------------------------
 
-// 2. Create a root
-const root = createRoot(container)
-
-// 3. Initial render: Render your app
-root.render(
+ReactDOM.render(
   <React.StrictMode>
     {/*
-      Add the 'prefix' prop here to test custom storage keys.
-      Check your browser's devtools (Application -> Local Storage)
-      to see the keys prefixed with "myTestApp:"
+      We pass our prefix and new defaults array to the provider.
+      It will now pre-populate storage with these values.
     */}
-    <AdvancedStateProvider prefix='myTestApp'>
+    <AdvancedStateProvider prefix='myTestApp' defaults={appStateDefaults}>
       <App />
     </AdvancedStateProvider>
-  </React.StrictMode>
+  </React.StrictMode>,
+  document.getElementById('root')
 )
