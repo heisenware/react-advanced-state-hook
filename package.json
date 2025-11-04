@@ -1,6 +1,6 @@
 {
   "name": "react-advanced-state-hook",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "A React hook that extends useState with persistence, debouncing, and advanced cross-component/tab sync.",
   "main": "src/index.js",
   "type": "module",
