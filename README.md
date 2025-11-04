@@ -138,6 +138,20 @@ This provider component is **required** if you use the `notify: 'cross-component
 
   _Example:_ `<AdvancedStateProvider prefix="myApp">`
 
+## How is this different from Zustand?
+
+Zustand is a fantastic, simple global state manager. This hook solves a similar problem but with a different philosophy and some unique advantages.
+
+- **Atomic vs. Single Store:** Zustand creates a single, global store that holds all your state in one object (like Redux). This hook is an "atomic" state manager (like Recoil or Jotai), where each piece of state is managed independently by its key. Using this hook for all your shared state is a perfectly valid and performant approach.
+
+- **API:** Zustand uses a selector-based API (`useStore(state => state.user)`). This hook mimics `useState` (`[value, setValue]`), making it feel like a "supercharged" version of React's built-in hook.
+
+- **Persistence Performance:** When Zustand's `persist` middleware saves, it stringifies your _entire state object_. This hook only stringifies the _single value that changed_. For large states, this can be a significant performance advantage on writes.
+
+- **Built-in Features:** This hook was designed from the ground up with persistence, robust cross-tab synchronization, and URL-based scoping as core, first-class features, not just middleware.
+
+**Use this hook** when you want to easily upgrade individual pieces of state with persistence and cross-tab sync. **Use Zustand** when you want a more traditional, single-store global state solution.
+
 ## Storage Key Format
 
 The hook generates a clean, readable key for storage:
