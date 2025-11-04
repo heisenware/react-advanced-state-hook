@@ -99,7 +99,7 @@ This is the main hook you will use. It takes a required `key` and an optional `o
 #### Options
 
 - **`initial`** (any)
-  The initial value to use if no value is found in storage. This value is now **eagerly written** to storage on mount if storage is empty.
+  The initial value to use if no value is found in storage. This value is **eagerly written** to storage on mount if storage is empty.
 
 - **`debounce`** (number)
   Debounce delay in milliseconds. Applies only to persistence and notifications, not the local UI update.
@@ -114,10 +114,10 @@ This is the main hook you will use. It takes a required `key` and an optional `o
 - **`notify`** (string)
   Defines the synchronization strategy.
 
-  - **(default)**: No notification. Behaves like `useState`.
   - `'cross-component'`: Notifies other components in the same tab (requires `AdvancedStateProvider`).
   - `'cross-tab'`: Notifies other tabs (requires `persist`).
   - `'cross-component-and-tab'`: Does both (requires `AdvancedStateProvider` and `persist`).
+  - If not set, no one is notified. Behaves like `useState`
 
 - **`scopeByUrlParam`** (string)
   Scopes storage key by a URL parameter. E.g., `'appId'` uses the value of `?appId=...`.
@@ -135,6 +135,7 @@ This provider component is **required** if you use the `notify: 'cross-component
 
 - **`prefix`** (string)
   A custom prefix for all storage keys. Defaults to `'advState'`.
+
   _Example:_ `<AdvancedStateProvider prefix="myApp">`
 
 ## Storage Key Format
