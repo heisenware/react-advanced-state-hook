@@ -6,7 +6,7 @@ A powerful React hook that extends useState with optional persistence, debouncin
 - Debounce Updates: Automatically debounce state setters.
 - Cross-Component Sync: Share state between components without prop drilling (similar to Zustand).
 - Cross-Tab Sync: Share state between different browser tabs.
-- Scoped Storage: Automatically scope persisted state to URL parameters (like appId) or URL path segments (like /docs/$1).
+- Scoped Storage: Automatically scope persisted state to URL parameters (like appId) or URL path segments (like `$1-$2`).
 
 ## Install
 
@@ -45,7 +45,7 @@ Use the `useAdvancedState` hook just like `useState`, but with a unique key and 
 import { useAdvancedState } from 'react-advanced-state-hook'
 
 // --- Component A ---
-// Assuming URL is: https://example.com/app project-123/editor?appId=my-app
+// Assuming URL is: https://example.com/app/project-123/editor?appId=my-app
 
 const ComponentA = () => {
   // This state is scoped by URL parameter:
@@ -60,7 +60,7 @@ const ComponentA = () => {
   const [docId, setDocId] = useAdvancedState('currentDoc', {
     initial: null,
     persist: 'local',
-    scopeByUrlPath: '/app/$2' // Key will be scoped to 'project-123'
+    scopeByUrlPath: '$2' // Key will be scoped to 'project-123'
   })
 
   return (
@@ -73,9 +73,12 @@ const ComponentA = () => {
 }
 
 // --- Component B (in a different part of your app) ---
+
 const ComponentB = () => {
+
   // This component will update in real-time with ComponentA
   // because they share the same key ('username')
+
   const [name] = useAdvancedState('username', {
     initial: 'Guest',
     notify: 'cross-component', // Just listens for context updates
