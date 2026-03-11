@@ -236,7 +236,7 @@ function debounce (func, delay) {
  * @param {'cross-component' | 'cross-tab' | 'cross-component-and-tab'} [options.notify] - Sync strategy.
  * @param {string} [options.scopeByUrlParam] - Scope storage key by URL parameter.
  * @param {string} [options.scopeByUrlPath] - Scope storage key by URL path segments (e.g., '$1_$3').
- * @returns {[T, (value: T | ((prev: T) => T)) => void]}
+ * @returns {[T, (value: T | ((prev: T) => T)) => void, { isCached: boolean, get: () => T }]}
  */
 export function useAdvancedState (key, options = {}) {
   // Get store, prefix, and defaults from context
@@ -261,6 +261,9 @@ export function useAdvancedState (key, options = {}) {
 
   const debouncedSync = useRef(null)
 
+  // Track if the initial value was pulled from an existing cache
+  const wasCachedRef = useRef(false)
+
   const storageKey = useMemo(
     () => getScopedStorageKey(prefix, scopeByUrlParam, scopeByUrlPath, key),
     [prefix, scopeByUrlParam, scopeByUrlPath, key]
@@ -280,6 +283,8 @@ export function useAdvancedState (key, options = {}) {
           const parsedValue = JSON.parse(storageValue)
           // Sync context store with storage on load
           store.initState(key, parsedValue)
+
+          wasCachedRef.current = true // Flag as cached
           return parsedValue
         }
       } catch (e) {
@@ -294,6 +299,7 @@ export function useAdvancedState (key, options = {}) {
     if (notify === 'cross-component' || notify === 'cross-component-and-tab') {
       const storeValue = store.getState(key)
       if (storeValue !== undefined) {
+        wasCachedRef.current = true // Flag as cached
         return storeValue
       }
     }
@@ -452,5 +458,14 @@ export function useAdvancedState (key, options = {}) {
     [notify, key, store] // setLocalValue is stable, debouncedSync.current is a ref
   )
 
-  return [localValue, setFn]
+  // Construct the meta object
+  const meta = useMemo(
+    () => ({
+      isCached: wasCachedRef.current,
+      get: () => store.getState(key)
+    }),
+    [store, key]
+  )
+
+  return [localValue, setFn, meta]
 }

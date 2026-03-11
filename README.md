@@ -157,6 +157,18 @@ This is the main hook you will use. It takes a required `key` and an optional
 
 ---
 
+#### Returns
+
+The hook returns an array with three elements (similar to `useState`, but with a bonus `meta` object):
+
+`[value, setValue, meta]`
+
+- **`value`**: The current state value.
+- **`setValue`**: The setter function. Accepts a new value or a callback `(prev) => new_value`.
+- **`meta`** (object):
+  - **`isCached`** (boolean): `true` if the initial value was successfully loaded from `localStorage`, `sessionStorage`, or the in-memory context provider cache. `false` if it fell back to the `initial` default. Useful for skipping redundant network fetches on remount.
+  - **`get`** (function): A synchronous getter method `() => value`. Highly useful inside complex async callbacks or event listeners where you want to read the latest state without adding the state variable to a dependency array.
+
 ### `<AdvancedStateProvider>`
 
 This provider component is **required** if you use the
