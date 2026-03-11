@@ -66,7 +66,7 @@ function createStore () {
 
 // --- React Context ---
 // This holds the store, the user-defined prefix, and the defaults map.
-const AdvancedStateContext = React.createContext({
+export const AdvancedStateContext = React.createContext({
   store: createStore(), // Default store for safety (though provider is required)
   prefix: 'advState',
   defaultsMap: new Map()
