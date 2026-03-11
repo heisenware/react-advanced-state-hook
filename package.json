@@ -27,7 +27,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/heisenware/react-advanced-state-hook"
+    "url": "git+https://github.com/heisenware/react-advanced-state-hook.git"
   },
   "peerDependencies": {
     "react": ">=16.8.0",
