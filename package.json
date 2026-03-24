@@ -1,6 +1,6 @@
 {
   "name": "react-advanced-state-hook",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "A React hook that extends useState with persistence, debouncing, and advanced cross-component/tab sync.",
   "main": "dist/index.js",
   "module": "dist/index.js",
@@ -8,7 +8,9 @@
     ".": "./dist/index.js"
   },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
     "build": "rm -rf dist && babel src --out-dir dist --extensions \".js,.jsx\" --ignore \"src/example/**\""
   },
   "keywords": [
@@ -38,9 +40,22 @@
     "@babel/core": "^7.17.0",
     "@babel/preset-env": "^7.17.0",
     "@babel/preset-react": "^7.17.0",
-    "baseline-browser-mapping": "^2.10.0"
+    "@testing-library/jest-dom": "^6.4.0",
+    "@testing-library/react": "^14.2.0",
+    "babel-jest": "^29.7.0",
+    "baseline-browser-mapping": "^2.10.0",
+    "jest": "^29.7.0",
+    "jest-environment-jsdom": "^29.7.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
   },
   "files": [
     "dist"
-  ]
+  ],
+  "jest": {
+    "testEnvironment": "jsdom",
+    "transform": {
+      "^.+\\.(js|jsx)$": "babel-jest"
+    }
+  }
 }

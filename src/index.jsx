@@ -351,26 +351,25 @@ export function useAdvancedState (key, options = {}) {
    */
   const performSync = useCallback(
     newValue => {
-      // 1. Persist to storage
       if (persist && typeof window !== 'undefined') {
         const storage = persist === 'local' ? localStorage : sessionStorage
         try {
-          const valueToStore = JSON.stringify(newValue)
-          storage.setItem(storageKey, valueToStore)
-
-          // 2. Notify cross-tab (if configured)
-          if (notify === 'cross-tab' || notify === 'cross-component-and-tab') {
-            const otherStorage =
-              persist === 'local' ? sessionStorage : localStorage
-            otherStorage.setItem(storageKey, valueToStore)
-            otherStorage.removeItem(storageKey) // Clean up immediately
+          // If the value is undefined, remove it from storage entirely
+          if (newValue === undefined) {
+            storage.removeItem(storageKey)
+          } else {
+            const valueToStore = JSON.stringify(newValue)
+            storage.setItem(storageKey, valueToStore)
           }
+          // Note: We removed the manual cross-tab signaling here.
+          // The browser automatically fires a 'storage' event in other tabs
+          // when localStorage is updated.
         } catch (e) {
           console.error(`[AdvancedState] Failed to save value for ${key}:`, e)
         }
       }
     },
-    [persist, storageKey, notify]
+    [persist, storageKey, key]
   )
 
   // Create or update the debounced function
@@ -386,7 +385,10 @@ export function useAdvancedState (key, options = {}) {
     if (notify === 'cross-component' || notify === 'cross-component-and-tab') {
       const unsubscribe = store.subscribe((updatedKey, newValue) => {
         if (updatedKey === key) {
-          setLocalValue(newValue) // Update local state from store
+          setLocalValue(prev => {
+            if (Object.is(prev, newValue)) return prev
+            return newValue
+          })
         }
       })
       return unsubscribe // Clean up subscription on unmount
@@ -428,34 +430,46 @@ export function useAdvancedState (key, options = {}) {
 
   // --- Setter Function ---
 
+  const latestValueRef = useRef(localValue)
+  latestValueRef.current = localValue
+
   /**
    * The wrapped setter function returned by the hook.
    */
   const setFn = useCallback(
     valueOrFn => {
-      // Use the functional update form of useState to get the new value
-      setLocalValue(prevValue => {
-        const newValue =
-          typeof valueOrFn === 'function' ? valueOrFn(prevValue) : valueOrFn
+      const prev = latestValueRef.current
+      const newValue =
+        typeof valueOrFn === 'function' ? valueOrFn(prev) : valueOrFn
 
-        // 1. Update the context store *immediately* (if notify)
-        if (
-          notify === 'cross-component' ||
-          notify === 'cross-component-and-tab'
-        ) {
+      // Explicit Early Bailout
+      if (Object.is(prev, newValue)) {
+        return
+      }
+
+      // Update the local React state immediately
+      setLocalValue(newValue)
+
+      // Sync Context Store
+      if (
+        notify === 'cross-component' ||
+        notify === 'cross-component-and-tab'
+      ) {
+        // Prevent infinite loops by only updating if the store actually needs it
+        if (!Object.is(store.getState(key), newValue)) {
           store.setState(key, newValue)
         }
+      } else {
+        // Keep the store silently updated for components that might mount later
+        store.initState(key, newValue)
+      }
 
-        // 2. Trigger the (debounced) sync for persistence/cross-tab
-        if (debouncedSync.current) {
-          debouncedSync.current(newValue)
-        }
-
-        // 3. Return the new value for the immediate local state update
-        return newValue
-      })
+      // 4. Sync Persistence (Debounced)
+      if (debouncedSync.current) {
+        debouncedSync.current(newValue)
+      }
     },
-    [notify, key, store] // setLocalValue is stable, debouncedSync.current is a ref
+    [notify, key, store] // Notice `localValue` is not here, keeping the reference stable!
   )
 
   // Construct the meta object
