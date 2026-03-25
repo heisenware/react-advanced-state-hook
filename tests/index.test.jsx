@@ -296,6 +296,104 @@ describe('Advanced State Management', () => {
     })
   })
 
+  describe('Storage Quota Limits & Error Handling', () => {
+    let consoleErrorSpy
+    let consoleWarnSpy
+
+    beforeEach(() => {
+      // Mute console output for intentional errors during these tests
+      consoleErrorSpy = jest
+        .spyOn(console, 'error')
+        .mockImplementation(() => {})
+      consoleWarnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {})
+    })
+
+    afterEach(() => {
+      consoleErrorSpy.mockRestore()
+      consoleWarnSpy.mockRestore()
+    })
+
+    it('clears session storage when quota is exceeded', () => {
+      // 1. Render the hook first so the initial "eager write" succeeds
+      const { result } = renderHook(
+        () =>
+          useAdvancedState('sessionData', {
+            initial: 'chunk1',
+            persist: 'session'
+          }),
+        { wrapper: createWrapper() }
+      )
+
+      // 2. NOW force the mock to throw an error on the NEXT setItem call
+      sessionStorageMock.setItem.mockImplementationOnce(() => {
+        throw new Error('QuotaExceededError')
+      })
+
+      act(() => {
+        // 3. Attempt to save new data (triggers performSync)
+        result.current[1]('chunk2-that-is-too-large')
+      })
+
+      // 4. Assertions
+      expect(sessionStorageMock.setItem).toHaveBeenCalledWith(
+        'testApp:sessionData',
+        '"chunk2-that-is-too-large"'
+      )
+      expect(sessionStorageMock.removeItem).toHaveBeenCalledWith(
+        'testApp:sessionData'
+      )
+
+      // Check that both warnings were fired!
+      expect(consoleWarnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Failed to save value for sessionData'),
+        expect.any(Error)
+      )
+      expect(consoleWarnSpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'Cleared stale session data for sessionData due to quota limits.'
+        )
+      )
+    })
+
+    it('does not clear local storage when quota is exceeded', () => {
+      // 1. Render the hook first so the initial "eager write" succeeds
+      const { result } = renderHook(
+        () =>
+          useAdvancedState('localData', {
+            initial: 'chunk1',
+            persist: 'local'
+          }),
+        { wrapper: createWrapper() }
+      )
+
+      // 2. NOW force the mock to throw an error on the NEXT setItem call
+      localStorageMock.setItem.mockImplementationOnce(() => {
+        throw new Error('QuotaExceededError')
+      })
+
+      act(() => {
+        // 3. Attempt to save new data (triggers performSync)
+        result.current[1]('chunk2-that-is-too-large')
+      })
+
+      // 4. Assertions
+      expect(localStorageMock.setItem).toHaveBeenCalledWith(
+        'testApp:localData',
+        '"chunk2-that-is-too-large"'
+      )
+      expect(localStorageMock.removeItem).not.toHaveBeenCalledWith(
+        'testApp:localData'
+      )
+
+      // Crucial change: we check the Warn spy instead of the Error spy
+      expect(consoleWarnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Failed to save value for localData'),
+        expect.any(Error)
+      )
+      expect(consoleErrorSpy).not.toHaveBeenCalled()
+    })
+  })
+
   describe('Render Optimization', () => {
     it('does not cause extra renders when setting the exact same primitive value', () => {
       const renderTracker = jest.fn()

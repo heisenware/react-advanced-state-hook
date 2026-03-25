@@ -318,7 +318,19 @@ export function useAdvancedState (key, options = {}) {
             otherStorage.removeItem(storageKey)
           }
         } catch (e) {
-          console.error(`[AdvancedState] Failed to save value for ${key}:`, e)
+          console.warn(`[AdvancedState] Failed to save value for ${key}:`, e)
+          if (persist === 'session') {
+            try {
+              sessionStorage.removeItem(storageKey)
+              console.warn(
+                `[AdvancedState] Cleared stale session data for ${key} due to quota limits.`
+              )
+            } catch (cleanupError) {
+              console.error(
+                `[AdvancedState] Failed to clean up session storage, because: ${cleanupError.message}`
+              )
+            }
+          }
         }
       }
     },
