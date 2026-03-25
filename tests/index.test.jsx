@@ -1,3 +1,8 @@
+// --- Polyfills for React 18+ SSR Testing in JSDOM ---
+const { TextEncoder, TextDecoder } = require('util')
+global.TextEncoder = TextEncoder
+global.TextDecoder = TextDecoder
+
 import React from 'react'
 import {
   renderHook,
@@ -21,8 +26,10 @@ jest.mock('../src/idb-wrapper', () => {
       del: jest.fn(async key => {
         delete store[key]
       }),
+      sweep: jest.fn(async () => {}), // <-- ADDED: Mock the garbage collector
       _clear: () => {
         for (const key in store) delete store[key]
+        jest.clearAllMocks() // Ensure call counts reset between tests
       }
     }
   }
@@ -143,6 +150,34 @@ describe('Advanced State Management', () => {
       )
       expect(result.current[0]).toBe('xyz123')
       expect(result.current[2].isCached).toBe(true)
+    })
+    it('recovers gracefully from corrupted JSON in storage', () => {
+      // 1. Inject broken JSON into the mock storage
+      localStorageMock.setItem('testApp:brokenKey', '{"this is not valid JSON')
+
+      const consoleErrorSpy = jest
+        .spyOn(console, 'error')
+        .mockImplementation(() => {})
+
+      // 2. Render the hook
+      const { result } = renderHook(
+        () =>
+          useAdvancedState('brokenKey', {
+            initial: 'safe-fallback',
+            persist: 'local'
+          }),
+        { wrapper: createWrapper() }
+      )
+
+      // 3. Assert it caught the error, logged it, and used the fallback
+      expect(consoleErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Failed to parse stored value for brokenKey'),
+        expect.any(Error)
+      )
+      expect(result.current[0]).toBe('safe-fallback')
+      expect(result.current[2].isCached).toBe(false)
+
+      consoleErrorSpy.mockRestore()
     })
   })
 
@@ -394,14 +429,15 @@ describe('Advanced State Management', () => {
     })
   })
 
-  describe('IndexedDB Asynchronous Persistence', () => {
+  // ---> UPDATED: Renamed block from IndexedDB to LocalDB
+  describe('LocalDB Asynchronous Persistence', () => {
     it('initializes asynchronously and updates the isInitializing flag', async () => {
       await mockIdb.set('testApp:asyncData', { user: 'Bob' })
       const { result } = renderHook(
         () =>
           useAdvancedState('asyncData', {
             initial: null,
-            persist: 'indexeddb'
+            persist: 'localdb' // <-- Changed from 'indexeddb'
           }),
         { wrapper: createWrapper() }
       )
@@ -420,8 +456,7 @@ describe('Advanced State Management', () => {
 
     it('writes to IndexedDB asynchronously upon state change', async () => {
       const { result } = renderHook(
-        () =>
-          useAdvancedState('saveData', { initial: 0, persist: 'indexeddb' }),
+        () => useAdvancedState('saveData', { initial: 0, persist: 'localdb' }),
         { wrapper: createWrapper() }
       )
       act(() => {
@@ -439,7 +474,7 @@ describe('Advanced State Management', () => {
         () =>
           useAdvancedState('sharedIdb', {
             initial: 'A',
-            persist: 'indexeddb',
+            persist: 'localdb',
             notify: 'cross-tab'
           }),
         { wrapper: createWrapper() }
@@ -448,7 +483,7 @@ describe('Advanced State Management', () => {
         () =>
           useAdvancedState('sharedIdb', {
             initial: 'A',
-            persist: 'indexeddb',
+            persist: 'localdb',
             notify: 'cross-tab'
           }),
         { wrapper: createWrapper() }
@@ -469,7 +504,7 @@ describe('Advanced State Management', () => {
         () =>
           useAdvancedState('deleteData', {
             initial: 'keep-me',
-            persist: 'indexeddb'
+            persist: 'localdb'
           }),
         { wrapper: createWrapper() }
       )
@@ -479,6 +514,66 @@ describe('Advanced State Management', () => {
 
       await waitFor(() => {
         expect(mockIdb.del).toHaveBeenCalledWith('testApp:deleteData')
+      })
+    })
+  })
+
+  describe('SessionDB & Garbage Collection', () => {
+    it('calls idb.sweep on provider mount to clean up old sessiondb data', async () => {
+      render(
+        <AdvancedStateProvider prefix='testApp'>{null}</AdvancedStateProvider>
+      )
+      await waitFor(() => {
+        expect(mockIdb.sweep).toHaveBeenCalled()
+      })
+    })
+
+    it('prefixes storage keys with a session ID when using sessiondb', async () => {
+      const { result } = renderHook(
+        () =>
+          useAdvancedState('ephemeralData', {
+            initial: 'secret',
+            persist: 'sessiondb'
+          }),
+        { wrapper: createWrapper() }
+      )
+
+      act(() => {
+        result.current[1]('new-secret')
+      })
+
+      await waitFor(() => {
+        // We use a regex to ensure it starts with __sessiondb__ and ends with our key
+        expect(mockIdb.set).toHaveBeenCalledWith(
+          expect.stringMatching(/^__sessiondb__:.*:testApp:ephemeralData$/),
+          'new-secret'
+        )
+      })
+    })
+
+    it('reuses an existing session ID if present in sessionStorage (Tab Duplication)', async () => {
+      // Simulate a tab duplication by pre-populating sessionStorage
+      sessionStorageMock.setItem('adv_state_session_id', 'mocked-tab-id-123')
+
+      const { result } = renderHook(
+        () =>
+          useAdvancedState('dupData', {
+            initial: 'value',
+            persist: 'sessiondb'
+          }),
+        { wrapper: createWrapper() }
+      )
+
+      act(() => {
+        result.current[1]('new-value')
+      })
+
+      await waitFor(() => {
+        // It should precisely match the mocked ID we injected
+        expect(mockIdb.set).toHaveBeenCalledWith(
+          '__sessiondb__:mocked-tab-id-123:testApp:dupData',
+          'new-value'
+        )
       })
     })
   })
@@ -541,6 +636,50 @@ describe('Advanced State Management', () => {
       })
       expect(renderTrackerA).toHaveBeenCalledTimes(2)
       expect(renderTrackerB).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  describe('Server-Side Rendering (SSR) Safety', () => {
+    const originalWindow = global.window
+
+    beforeEach(() => {
+      // Temporarily delete the window object to simulate a Node.js SSR environment
+      delete global.window
+    })
+
+    afterEach(() => {
+      // Restore the window object so we don't break other tests
+      global.window = originalWindow
+    })
+
+    it('returns the initial state without crashing when window is undefined', () => {
+      const { renderToString } = require('react-dom/server')
+      // In an SSR environment, we cannot use RTL's DOM-based renderHook.
+      // We must use React's native renderToString, exactly like Next.js does.
+      const TestComponent = () => {
+        const [value, , meta] = useAdvancedState('ssrData', {
+          initial: 'server-value',
+          persist: 'local'
+        })
+
+        // Render the state directly into the HTML string
+        return (
+          <div>
+            <span id='val'>{value}</span>
+            <span id='cache'>{meta.isCached ? 'cached' : 'not-cached'}</span>
+          </div>
+        )
+      }
+
+      const html = renderToString(
+        <AdvancedStateProvider prefix='testApp'>
+          <TestComponent />
+        </AdvancedStateProvider>
+      )
+
+      // Assert the HTML string contains our expected server-side values
+      expect(html).toContain('server-value')
+      expect(html).toContain('not-cached')
     })
   })
 })

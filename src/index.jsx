@@ -15,6 +15,20 @@ import { idb } from './idb-wrapper'
 const useIsomorphicLayoutEffect =
   typeof window !== 'undefined' ? useLayoutEffect : useEffect
 
+// Lazy-loads and guarantees a unique Tab Session Fingerprint
+function getTabSessionId () {
+  if (typeof window === 'undefined') return 'ssr'
+
+  let id = sessionStorage.getItem('adv_state_session_id')
+  if (!id) {
+    // Generate a highly random, collision-resistant string
+    id = Math.random().toString(36).substring(2, 15) + Date.now().toString(36)
+    sessionStorage.setItem('adv_state_session_id', id)
+  }
+
+  return id
+}
+
 // --- Internal Pub/Sub Store ---
 
 /**
@@ -145,6 +159,9 @@ export function AdvancedStateProvider ({
   useEffect(() => {
     if (typeof window === 'undefined') return
 
+    // Kick off the asynchronous Garbage Collector to clear dead tabs
+    idb.sweep().catch(e => console.warn('[AdvancedState] IDB sweep failed:', e))
+
     const { store, defaultsMap } = contextValue
 
     for (const item of defaultsMap.values()) {
@@ -152,14 +169,20 @@ export function AdvancedStateProvider ({
 
       if (!persist || !key) continue
 
-      const storageKey = getScopedStorageKey(
+      const baseKey = getScopedStorageKey(
         prefix,
         scopeByUrlParam,
         scopeByUrlPath,
         key
       )
 
-      if (persist === 'indexeddb') {
+      // If sessiondb, prefix it to sandbox it from other tabs
+      const storageKey =
+        persist === 'sessiondb'
+          ? `__sessiondb__:${getTabSessionId()}:${baseKey}`
+          : baseKey
+
+      if (persist === 'localdb' || persist === 'sessiondb') {
         // --- Asynchronous IDB Pre-warming ---
         // We use a fire-and-forget promise chain here so we don't block
         // the loop or React's commit phase.
@@ -232,7 +255,7 @@ function debounce (func, delay) {
  * @param {object} [options={}] - Local options to override defaults.
  * @param {T} [options.initial] - The initial value.
  * @param {number} [options.debounce] - Debounce delay in ms.
- * @param {'local' | 'session'} [options.persist] - Persistence target.
+ * @param {'local' | 'session' | 'localdb' | 'sessiondb'} [options.persist] - Persistence target.
  * @param {'cross-component' | 'cross-tab' | 'cross-component-and-tab'} [options.notify] - Sync strategy.
  * @param {string} [options.scopeByUrlParam] - Scope storage key by URL parameter.
  * @param {string} [options.scopeByUrlPath] - Scope storage key by URL path segments (e.g., '$1_$3').
@@ -258,12 +281,21 @@ export function useAdvancedState (key, options = {}) {
   const debouncedSync = useRef(null)
   const wasCachedRef = useRef(false)
 
-  const [isInitializing, setIsInitializing] = useState(persist === 'indexeddb')
+  const isIdbTarget = persist === 'localdb' || persist === 'sessiondb'
 
-  const storageKey = useMemo(
-    () => getScopedStorageKey(prefix, scopeByUrlParam, scopeByUrlPath, key),
-    [prefix, scopeByUrlParam, scopeByUrlPath, key]
-  )
+  const [isInitializing, setIsInitializing] = useState(isIdbTarget)
+
+  const storageKey = useMemo(() => {
+    const baseKey = getScopedStorageKey(
+      prefix,
+      scopeByUrlParam,
+      scopeByUrlPath,
+      key
+    )
+    return persist === 'sessiondb'
+      ? `__sessiondb__:${getTabSessionId()}:${baseKey}`
+      : baseKey
+  }, [prefix, scopeByUrlParam, scopeByUrlPath, key, persist])
 
   // Lazy initializer for useState. Resolves the initial state by checking
   // browser storage, then the central store, and finally falling back to props.
@@ -316,7 +348,7 @@ export function useAdvancedState (key, options = {}) {
 
   // --- Asynchronous load effect for IndexedDB ---
   useEffect(() => {
-    if (persist === 'indexeddb' && typeof window !== 'undefined') {
+    if (isIdbTarget && typeof window !== 'undefined') {
       setIsInitializing(true)
 
       const loadFromIdb = async () => {
@@ -341,8 +373,7 @@ export function useAdvancedState (key, options = {}) {
   // --- Eager storage initialization for Web Storage ---
   useEffect(() => {
     // Skip eager writes for indexeddb so it doesn't leak into sessionStorage!
-    if (!persist || persist === 'indexeddb' || typeof window === 'undefined')
-      return
+    if (!persist || isIdbTarget || typeof window === 'undefined') return
 
     const storage = persist === 'local' ? localStorage : sessionStorage
     const storageValue = storage.getItem(storageKey)
@@ -367,7 +398,7 @@ export function useAdvancedState (key, options = {}) {
     newValue => {
       if (!persist || typeof window === 'undefined') return
 
-      if (persist === 'indexeddb') {
+      if (isIdbTarget) {
         // Handle Async IndexedDB Write
         const writePromise =
           newValue === undefined
@@ -453,7 +484,7 @@ export function useAdvancedState (key, options = {}) {
       persist &&
       typeof window !== 'undefined'
     ) {
-      if (persist === 'indexeddb') {
+      if (isIdbTarget) {
         const bc = new BroadcastChannel('adv_state_channel')
         bc.onmessage = event => {
           if (event.data.key === storageKey) {
