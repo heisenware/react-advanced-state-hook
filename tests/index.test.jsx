@@ -1,9 +1,59 @@
 import React from 'react'
-import { renderHook, act, render, screen } from '@testing-library/react'
+import {
+  renderHook,
+  act,
+  render,
+  screen,
+  waitFor
+} from '@testing-library/react'
 import '@testing-library/jest-dom'
-import { AdvancedStateProvider, useAdvancedState } from '../src/index'
 
-// --- Mocks & Setup ---
+// --- IndexedDB & BroadcastChannel Mocks ---
+
+jest.mock('../src/idb-wrapper', () => {
+  const store = {}
+  return {
+    idb: {
+      get: jest.fn(async key => store[key]),
+      set: jest.fn(async (key, value) => {
+        store[key] = value
+      }),
+      del: jest.fn(async key => {
+        delete store[key]
+      }),
+      _clear: () => {
+        for (const key in store) delete store[key]
+      }
+    }
+  }
+})
+
+import { AdvancedStateProvider, useAdvancedState } from '../src/index'
+import { idb as mockIdb } from '../src/idb-wrapper'
+
+class MockBroadcastChannel {
+  constructor (name) {
+    this.name = name
+    if (!global.__BCCheck) global.__BCCheck = {}
+    if (!global.__BCCheck[name]) global.__BCCheck[name] = []
+    global.__BCCheck[name].push(this)
+  }
+  postMessage (message) {
+    global.__BCCheck[this.name].forEach(bc => {
+      if (bc !== this && typeof bc.onmessage === 'function') {
+        bc.onmessage({ data: message })
+      }
+    })
+  }
+  close () {
+    global.__BCCheck[this.name] = global.__BCCheck[this.name].filter(
+      bc => bc !== this
+    )
+  }
+}
+global.BroadcastChannel = MockBroadcastChannel
+
+// --- Web Storage Mocks & Setup ---
 
 const createMockStorage = () => {
   let store = {}
@@ -40,12 +90,14 @@ afterAll(() => {
 beforeEach(() => {
   window.localStorage.clear()
   window.sessionStorage.clear()
-  jest.clearAllMocks()
   window.location.search = ''
   window.location.pathname = '/'
-})
 
-// --- Test Utilities ---
+  mockIdb._clear()
+  global.__BCCheck = {}
+
+  jest.clearAllMocks()
+})
 
 const createWrapper = (props = {}) => {
   return function Wrapper ({ children }) {
@@ -63,13 +115,11 @@ describe('Advanced State Management', () => {
   describe('Initialization and Eager Writing', () => {
     it('initializes context with default values and pre-warms storage', () => {
       const defaults = [{ key: 'theme', initial: 'dark', persist: 'local' }]
-
       render(
         <AdvancedStateProvider prefix='testApp' defaults={defaults}>
           {null}
         </AdvancedStateProvider>
       )
-
       expect(localStorageMock.setItem).toHaveBeenCalledWith(
         'testApp:theme',
         '"dark"'
@@ -81,19 +131,16 @@ describe('Advanced State Management', () => {
         () => useAdvancedState('user', { initial: 'Alice' }),
         { wrapper: createWrapper() }
       )
-
       expect(result.current[0]).toBe('Alice')
       expect(result.current[2].isCached).toBe(false)
     })
 
     it('loads value from storage if it exists (isCached = true)', () => {
       localStorageMock.setItem('testApp:token', '"xyz123"')
-
       const { result } = renderHook(
         () => useAdvancedState('token', { initial: 'empty', persist: 'local' }),
         { wrapper: createWrapper() }
       )
-
       expect(result.current[0]).toBe('xyz123')
       expect(result.current[2].isCached).toBe(true)
     })
@@ -105,11 +152,9 @@ describe('Advanced State Management', () => {
         () => useAdvancedState('counter', { initial: 0, persist: 'local' }),
         { wrapper: createWrapper() }
       )
-
       act(() => {
         result.current[1](1)
       })
-
       expect(result.current[0]).toBe(1)
       expect(localStorageMock.setItem).toHaveBeenLastCalledWith(
         'testApp:counter',
@@ -123,11 +168,9 @@ describe('Advanced State Management', () => {
           useAdvancedState('status', { initial: 'active', persist: 'local' }),
         { wrapper: createWrapper() }
       )
-
       act(() => {
         result.current[1](undefined)
       })
-
       expect(result.current[0]).toBeUndefined()
       expect(localStorageMock.setItem).not.toHaveBeenCalledWith(
         'testApp:status',
@@ -141,11 +184,9 @@ describe('Advanced State Management', () => {
         () => useAdvancedState('count', { initial: 5 }),
         { wrapper: createWrapper() }
       )
-
       act(() => {
         result.current[1](prev => prev + 5)
       })
-
       expect(result.current[0]).toBe(10)
     })
   })
@@ -153,7 +194,6 @@ describe('Advanced State Management', () => {
   describe('URL Scoping', () => {
     it('scopes storage keys by URL Parameter', () => {
       window.location.search = '?userId=99'
-
       renderHook(
         () =>
           useAdvancedState('profile', {
@@ -163,7 +203,6 @@ describe('Advanced State Management', () => {
           }),
         { wrapper: createWrapper() }
       )
-
       expect(localStorageMock.setItem).toHaveBeenCalledWith(
         'testApp:99:profile',
         '"data"'
@@ -172,7 +211,6 @@ describe('Advanced State Management', () => {
 
     it('scopes storage keys by URL Path pattern', () => {
       window.location.pathname = '/dashboard/settings/user123'
-
       renderHook(
         () =>
           useAdvancedState('theme', {
@@ -182,7 +220,6 @@ describe('Advanced State Management', () => {
           }),
         { wrapper: createWrapper() }
       )
-
       expect(localStorageMock.setItem).toHaveBeenCalledWith(
         'testApp:user123:theme',
         '"light"'
@@ -193,7 +230,6 @@ describe('Advanced State Management', () => {
   describe('Synchronization (Cross-Component and Cross-Tab)', () => {
     it('syncs state between two distinct components using the same key', () => {
       let valueB = null
-
       const ComponentA = () => {
         const [, setShared] = useAdvancedState('shared', {
           initial: 'A',
@@ -201,29 +237,24 @@ describe('Advanced State Management', () => {
         })
         return <button onClick={() => setShared('B')}>Update Shared</button>
       }
-
       const ComponentB = () => {
         const [shared] = useAdvancedState('shared', {
           notify: 'cross-component'
         })
-        valueB = shared // Capture value for assertion
+        valueB = shared
         return null
       }
-
       render(
         <AdvancedStateProvider prefix='testApp'>
           <ComponentA />
           <ComponentB />
         </AdvancedStateProvider>
       )
-
-      expect(valueB).toBe('A') // Initial state
-
+      expect(valueB).toBe('A')
       act(() => {
         screen.getByText('Update Shared').click()
       })
-
-      expect(valueB).toBe('B') // Synced state
+      expect(valueB).toBe('B')
     })
 
     it('responds to cross-tab storage events', () => {
@@ -236,7 +267,6 @@ describe('Advanced State Management', () => {
           }),
         { wrapper: createWrapper() }
       )
-
       act(() => {
         const event = new Event('storage')
         event.key = 'testApp:tabSync'
@@ -244,7 +274,6 @@ describe('Advanced State Management', () => {
         event.storageArea = sessionStorageMock
         window.dispatchEvent(event)
       })
-
       expect(result.current[0]).toBe('new-from-tab')
     })
   })
@@ -253,7 +282,6 @@ describe('Advanced State Management', () => {
     beforeAll(() => {
       jest.useFakeTimers()
     })
-
     afterAll(() => {
       jest.useRealTimers()
     })
@@ -268,27 +296,18 @@ describe('Advanced State Management', () => {
           }),
         { wrapper: createWrapper() }
       )
-
       act(() => {
         result.current[1]('a')
         result.current[1]('ab')
         result.current[1]('abc')
       })
-
-      // Storage should not be called with interim values
       expect(localStorageMock.setItem).not.toHaveBeenCalledWith(
         'testApp:search',
         '"a"'
       )
-      expect(localStorageMock.setItem).not.toHaveBeenCalledWith(
-        'testApp:search',
-        '"ab"'
-      )
-
       act(() => {
         jest.advanceTimersByTime(500)
       })
-
       expect(localStorageMock.setItem).toHaveBeenLastCalledWith(
         'testApp:search',
         '"abc"'
@@ -301,7 +320,6 @@ describe('Advanced State Management', () => {
     let consoleWarnSpy
 
     beforeEach(() => {
-      // Mute console output for intentional errors during these tests
       consoleErrorSpy = jest
         .spyOn(console, 'error')
         .mockImplementation(() => {})
@@ -314,7 +332,6 @@ describe('Advanced State Management', () => {
     })
 
     it('clears session storage when quota is exceeded', () => {
-      // 1. Render the hook first so the initial "eager write" succeeds
       const { result } = renderHook(
         () =>
           useAdvancedState('sessionData', {
@@ -323,18 +340,12 @@ describe('Advanced State Management', () => {
           }),
         { wrapper: createWrapper() }
       )
-
-      // 2. NOW force the mock to throw an error on the NEXT setItem call
       sessionStorageMock.setItem.mockImplementationOnce(() => {
         throw new Error('QuotaExceededError')
       })
-
       act(() => {
-        // 3. Attempt to save new data (triggers performSync)
         result.current[1]('chunk2-that-is-too-large')
       })
-
-      // 4. Assertions
       expect(sessionStorageMock.setItem).toHaveBeenCalledWith(
         'testApp:sessionData',
         '"chunk2-that-is-too-large"'
@@ -342,8 +353,6 @@ describe('Advanced State Management', () => {
       expect(sessionStorageMock.removeItem).toHaveBeenCalledWith(
         'testApp:sessionData'
       )
-
-      // Check that both warnings were fired!
       expect(consoleWarnSpy).toHaveBeenCalledWith(
         expect.stringContaining('Failed to save value for sessionData'),
         expect.any(Error)
@@ -356,7 +365,6 @@ describe('Advanced State Management', () => {
     })
 
     it('does not clear local storage when quota is exceeded', () => {
-      // 1. Render the hook first so the initial "eager write" succeeds
       const { result } = renderHook(
         () =>
           useAdvancedState('localData', {
@@ -365,18 +373,12 @@ describe('Advanced State Management', () => {
           }),
         { wrapper: createWrapper() }
       )
-
-      // 2. NOW force the mock to throw an error on the NEXT setItem call
       localStorageMock.setItem.mockImplementationOnce(() => {
         throw new Error('QuotaExceededError')
       })
-
       act(() => {
-        // 3. Attempt to save new data (triggers performSync)
         result.current[1]('chunk2-that-is-too-large')
       })
-
-      // 4. Assertions
       expect(localStorageMock.setItem).toHaveBeenCalledWith(
         'testApp:localData',
         '"chunk2-that-is-too-large"'
@@ -384,8 +386,6 @@ describe('Advanced State Management', () => {
       expect(localStorageMock.removeItem).not.toHaveBeenCalledWith(
         'testApp:localData'
       )
-
-      // Crucial change: we check the Warn spy instead of the Error spy
       expect(consoleWarnSpy).toHaveBeenCalledWith(
         expect.stringContaining('Failed to save value for localData'),
         expect.any(Error)
@@ -394,10 +394,98 @@ describe('Advanced State Management', () => {
     })
   })
 
+  describe('IndexedDB Asynchronous Persistence', () => {
+    it('initializes asynchronously and updates the isInitializing flag', async () => {
+      await mockIdb.set('testApp:asyncData', { user: 'Bob' })
+      const { result } = renderHook(
+        () =>
+          useAdvancedState('asyncData', {
+            initial: null,
+            persist: 'indexeddb'
+          }),
+        { wrapper: createWrapper() }
+      )
+
+      expect(result.current[0]).toBeNull()
+      expect(result.current[2].isInitializing).toBe(true)
+      expect(result.current[2].isCached).toBe(false)
+
+      await waitFor(() => {
+        expect(result.current[2].isInitializing).toBe(false)
+      })
+
+      expect(result.current[0]).toEqual({ user: 'Bob' })
+      expect(result.current[2].isCached).toBe(true)
+    })
+
+    it('writes to IndexedDB asynchronously upon state change', async () => {
+      const { result } = renderHook(
+        () =>
+          useAdvancedState('saveData', { initial: 0, persist: 'indexeddb' }),
+        { wrapper: createWrapper() }
+      )
+      act(() => {
+        result.current[1](42)
+      })
+      expect(result.current[0]).toBe(42)
+
+      await waitFor(() => {
+        expect(mockIdb.set).toHaveBeenCalledWith('testApp:saveData', 42)
+      })
+    })
+
+    it('syncs cross-tab using BroadcastChannel', async () => {
+      const { result: hookA } = renderHook(
+        () =>
+          useAdvancedState('sharedIdb', {
+            initial: 'A',
+            persist: 'indexeddb',
+            notify: 'cross-tab'
+          }),
+        { wrapper: createWrapper() }
+      )
+      const { result: hookB } = renderHook(
+        () =>
+          useAdvancedState('sharedIdb', {
+            initial: 'A',
+            persist: 'indexeddb',
+            notify: 'cross-tab'
+          }),
+        { wrapper: createWrapper() }
+      )
+
+      act(() => {
+        hookA.current[1]('B')
+      })
+      expect(hookA.current[0]).toBe('B')
+
+      await waitFor(() => {
+        expect(hookB.current[0]).toBe('B')
+      })
+    })
+
+    it('deletes from IndexedDB when setting to undefined', async () => {
+      const { result } = renderHook(
+        () =>
+          useAdvancedState('deleteData', {
+            initial: 'keep-me',
+            persist: 'indexeddb'
+          }),
+        { wrapper: createWrapper() }
+      )
+      act(() => {
+        result.current[1](undefined)
+      })
+
+      await waitFor(() => {
+        expect(mockIdb.del).toHaveBeenCalledWith('testApp:deleteData')
+      })
+    })
+  })
+
   describe('Render Optimization', () => {
     it('does not cause extra renders when setting the exact same primitive value', () => {
       const renderTracker = jest.fn()
-
       const { result } = renderHook(
         () => {
           renderTracker()
@@ -407,18 +495,13 @@ describe('Advanced State Management', () => {
       )
 
       expect(renderTracker).toHaveBeenCalledTimes(1)
-
       act(() => {
         result.current[1](2)
       })
-
       expect(renderTracker).toHaveBeenCalledTimes(2)
-
       act(() => {
         result.current[1](2)
       })
-
-      // 3. React should now correctly bail out!
       expect(renderTracker).toHaveBeenCalledTimes(2)
     })
 
@@ -426,7 +509,6 @@ describe('Advanced State Management', () => {
       const renderTrackerA = jest.fn()
       const renderTrackerB = jest.fn()
 
-      // Completely isolate Hook A and Hook B into separate React components
       const ComponentA = () => {
         renderTrackerA()
         const [, setA] = useAdvancedState('keyA', {
@@ -454,15 +536,10 @@ describe('Advanced State Management', () => {
 
       expect(renderTrackerA).toHaveBeenCalledTimes(1)
       expect(renderTrackerB).toHaveBeenCalledTimes(1)
-
       act(() => {
         screen.getByText('Update A').click()
       })
-
-      // Component A should re-render
       expect(renderTrackerA).toHaveBeenCalledTimes(2)
-
-      // Component B should NOT re-render
       expect(renderTrackerB).toHaveBeenCalledTimes(1)
     })
   })

@@ -7,6 +7,13 @@ import React, {
   useCallback,
   useLayoutEffect
 } from 'react'
+import { idb } from './idb-wrapper'
+
+// --- Utilities ---
+
+// Suppresses SSR warnings by falling back to useEffect on the server.
+const useIsomorphicLayoutEffect =
+  typeof window !== 'undefined' ? useLayoutEffect : useEffect
 
 // --- Internal Pub/Sub Store ---
 
@@ -134,7 +141,7 @@ export function AdvancedStateProvider ({
   }, [prefix, defaults, store])
 
   // Eager storage initialization: Ensure persistent items are written to
-  // the browser storage on mount if they do not already exist.
+  // the appropriate browser storage on mount if they do not already exist.
   useEffect(() => {
     if (typeof window === 'undefined') return
 
@@ -145,27 +152,56 @@ export function AdvancedStateProvider ({
 
       if (!persist || !key) continue
 
-      try {
-        const storageKey = getScopedStorageKey(
-          prefix,
-          scopeByUrlParam,
-          scopeByUrlPath,
-          key
-        )
-        const storage = persist === 'local' ? localStorage : sessionStorage
-        const storageValue = storage.getItem(storageKey)
+      const storageKey = getScopedStorageKey(
+        prefix,
+        scopeByUrlParam,
+        scopeByUrlPath,
+        key
+      )
 
-        if (storageValue === null) {
-          const valueToStore = store.getState(key)
-          if (valueToStore !== undefined) {
-            storage.setItem(storageKey, JSON.stringify(valueToStore))
+      if (persist === 'indexeddb') {
+        // --- Asynchronous IDB Pre-warming ---
+        // We use a fire-and-forget promise chain here so we don't block
+        // the loop or React's commit phase.
+        idb
+          .get(storageKey)
+          .then(storageValue => {
+            if (storageValue === undefined) {
+              const valueToStore = store.getState(key)
+              if (valueToStore !== undefined) {
+                idb.set(storageKey, valueToStore).catch(e => {
+                  console.error(
+                    `[AdvancedState] Failed to eager-write IDB default for "${key}":`,
+                    e
+                  )
+                })
+              }
+            }
+          })
+          .catch(e =>
+            console.error(
+              `[AdvancedState] Failed to read IDB default for "${key}":`,
+              e
+            )
+          )
+      } else {
+        // --- Synchronous Web Storage Pre-warming ---
+        try {
+          const storage = persist === 'local' ? localStorage : sessionStorage
+          const storageValue = storage.getItem(storageKey)
+
+          if (storageValue === null) {
+            const valueToStore = store.getState(key)
+            if (valueToStore !== undefined) {
+              storage.setItem(storageKey, JSON.stringify(valueToStore))
+            }
           }
+        } catch (e) {
+          console.error(
+            `[AdvancedState] Failed to initialize default for key "${key}":`,
+            e
+          )
         }
-      } catch (e) {
-        console.error(
-          `[AdvancedState] Failed to initialize default for key "${key}":`,
-          e
-        )
       }
     }
   }, [prefix, contextValue])
@@ -222,6 +258,8 @@ export function useAdvancedState (key, options = {}) {
   const debouncedSync = useRef(null)
   const wasCachedRef = useRef(false)
 
+  const [isInitializing, setIsInitializing] = useState(persist === 'indexeddb')
+
   const storageKey = useMemo(
     () => getScopedStorageKey(prefix, scopeByUrlParam, scopeByUrlPath, key),
     [prefix, scopeByUrlParam, scopeByUrlPath, key]
@@ -230,7 +268,10 @@ export function useAdvancedState (key, options = {}) {
   // Lazy initializer for useState. Resolves the initial state by checking
   // browser storage, then the central store, and finally falling back to props.
   const getInitialValue = () => {
-    if (persist && typeof window !== 'undefined') {
+    if (
+      (persist === 'local' || persist === 'session') &&
+      typeof window !== 'undefined'
+    ) {
       try {
         const storage = persist === 'local' ? localStorage : sessionStorage
         const storageValue = storage.getItem(storageKey)
@@ -268,13 +309,40 @@ export function useAdvancedState (key, options = {}) {
   // setter function to compute functional updates (e.g., prev => prev + 1)
   // without capturing stale closures or triggering Strict Mode side-effects.
   const latestValueRef = useRef(localValue)
-  useLayoutEffect(() => {
+
+  useIsomorphicLayoutEffect(() => {
     latestValueRef.current = localValue
   }, [localValue])
 
-  // Scope initialization: Eagerly write to storage when entering a new URL scope
+  // --- Asynchronous load effect for IndexedDB ---
   useEffect(() => {
-    if (!persist || typeof window === 'undefined') return
+    if (persist === 'indexeddb' && typeof window !== 'undefined') {
+      setIsInitializing(true)
+
+      const loadFromIdb = async () => {
+        try {
+          const storedValue = await idb.get(storageKey)
+          if (storedValue !== undefined) {
+            setLocalValue(storedValue)
+            store.initState(key, storedValue)
+            wasCachedRef.current = true
+          }
+        } catch (e) {
+          console.error(`[AdvancedState] IDB load failed for ${key}:`, e)
+        } finally {
+          setIsInitializing(false)
+        }
+      }
+
+      loadFromIdb()
+    }
+  }, [persist, storageKey, key, store])
+
+  // --- Eager storage initialization for Web Storage ---
+  useEffect(() => {
+    // Skip eager writes for indexeddb so it doesn't leak into sessionStorage!
+    if (!persist || persist === 'indexeddb' || typeof window === 'undefined')
+      return
 
     const storage = persist === 'local' ? localStorage : sessionStorage
     const storageValue = storage.getItem(storageKey)
@@ -297,7 +365,31 @@ export function useAdvancedState (key, options = {}) {
   // Handles writing data to browser storage and triggering cross-tab events.
   const performSync = useCallback(
     newValue => {
-      if (persist && typeof window !== 'undefined') {
+      if (!persist || typeof window === 'undefined') return
+
+      if (persist === 'indexeddb') {
+        // Handle Async IndexedDB Write
+        const writePromise =
+          newValue === undefined
+            ? idb.del(storageKey)
+            : idb.set(storageKey, newValue)
+
+        writePromise
+          .then(() => {
+            // Cross-tab sync for IndexedDB using BroadcastChannel
+            if (
+              notify === 'cross-tab' ||
+              notify === 'cross-component-and-tab'
+            ) {
+              const bc = new BroadcastChannel('adv_state_channel')
+              bc.postMessage({ key: storageKey, value: newValue })
+              bc.close()
+            }
+          })
+          .catch(e =>
+            console.warn(`[AdvancedState] IDB save failed for ${key}:`, e)
+          )
+      } else {
         const storage = persist === 'local' ? localStorage : sessionStorage
         try {
           if (newValue === undefined) {
@@ -361,28 +453,43 @@ export function useAdvancedState (key, options = {}) {
       persist &&
       typeof window !== 'undefined'
     ) {
-      const handleStorageChange = event => {
-        const otherStorage = persist === 'local' ? sessionStorage : localStorage
-        if (event.storageArea === otherStorage && event.key === storageKey) {
-          try {
-            const newValue = JSON.parse(event.newValue)
-
+      if (persist === 'indexeddb') {
+        const bc = new BroadcastChannel('adv_state_channel')
+        bc.onmessage = event => {
+          if (event.data.key === storageKey) {
+            const newValue = event.data.value
             setLocalValue(prev => (Object.is(prev, newValue) ? prev : newValue))
-
-            if (notify === 'cross-component-and-tab') {
+            if (notify === 'cross-component-and-tab')
               store.setState(key, newValue)
-            }
-          } catch (e) {
-            console.error(
-              `[AdvancedState] Failed to parse stored value for ${key}:`,
-              e
-            )
           }
         }
-      }
+        return () => bc.close()
+      } else {
+        const handleStorageChange = event => {
+          const otherStorage =
+            persist === 'local' ? sessionStorage : localStorage
+          if (event.storageArea === otherStorage && event.key === storageKey) {
+            try {
+              const newValue = JSON.parse(event.newValue)
 
-      window.addEventListener('storage', handleStorageChange)
-      return () => window.removeEventListener('storage', handleStorageChange)
+              setLocalValue(prev =>
+                Object.is(prev, newValue) ? prev : newValue
+              )
+
+              if (notify === 'cross-component-and-tab') {
+                store.setState(key, newValue)
+              }
+            } catch (e) {
+              console.error(
+                `[AdvancedState] Failed to parse stored value for ${key}:`,
+                e
+              )
+            }
+          }
+        }
+        window.addEventListener('storage', handleStorageChange)
+        return () => window.removeEventListener('storage', handleStorageChange)
+      }
     }
   }, [notify, persist, storageKey, key, store])
 
@@ -420,9 +527,10 @@ export function useAdvancedState (key, options = {}) {
   const meta = useMemo(
     () => ({
       isCached: wasCachedRef.current,
+      isInitializing,
       get: () => store.getState(key)
     }),
-    [store, key]
+    [store, key, isInitializing]
   )
 
   return [localValue, setFn, meta]
