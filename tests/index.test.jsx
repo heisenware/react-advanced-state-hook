@@ -516,6 +516,36 @@ describe('Advanced State Management', () => {
         expect(mockIdb.del).toHaveBeenCalledWith('testApp:deleteData')
       })
     })
+
+    it('updates the central store via meta.get() after asynchronous IDB load', async () => {
+      // 1. Pre-populate the database with the "real" value
+      await mockIdb.set('testApp:cacheTest', 'from-database')
+
+      // 2. Render the hook with a conflicting "initial" value
+      const { result } = renderHook(
+        () =>
+          useAdvancedState('cacheTest', {
+            initial: 'from-initial',
+            persist: 'localdb'
+          }),
+        { wrapper: createWrapper() }
+      )
+
+      // 3. During the first synchronous render, the store holds the initial value
+      expect(result.current[2].get()).toBe('from-initial')
+
+      // 4. Wait for the database to finish loading asynchronously
+      await waitFor(() => {
+        expect(result.current[2].isInitializing).toBe(false)
+      })
+
+      // 5. The local React state successfully updates to the database value
+      expect(result.current[0]).toBe('from-database')
+
+      // 6. THE TRAP: Does the central memory store (meta.get) match the database?
+      // Before our fix, this will FAIL and return 'from-initial'
+      expect(result.current[2].get()).toBe('from-database')
+    })
   })
 
   describe('SessionDB & Garbage Collection', () => {

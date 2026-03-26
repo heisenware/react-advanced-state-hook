@@ -356,7 +356,7 @@ export function useAdvancedState (key, options = {}) {
           const storedValue = await idb.get(storageKey)
           if (storedValue !== undefined) {
             setLocalValue(storedValue)
-            store.initState(key, storedValue)
+            store.setState(key, storedValue)
             wasCachedRef.current = true
           }
         } catch (e) {
