@@ -50,6 +50,9 @@ function createStore () {
         callback(key, value)
       }
     },
+    setSilent: (key, value) => {
+      stateValues.set(key, value)
+    },
     getState: key => stateValues.get(key),
     initState: (key, value) => {
       if (!stateValues.has(key)) {
@@ -534,20 +537,23 @@ export function useAdvancedState (key, options = {}) {
 
       if (Object.is(prevValue, newValue)) return
 
-      // 1. Update React state immediately
+      // 1. Instantly update the ref to prevent stale closures
+      latestValueRef.current = newValue
+
+      // 2. Update React state immediately
       setLocalValue(newValue)
 
-      // 2. Broadcast to central store
+      // 3. Update the central store
       if (
         notify === 'cross-component' ||
         notify === 'cross-component-and-tab'
       ) {
-        store.setState(key, newValue)
+        store.setState(key, newValue) // Updates store AND triggers subscriptions
       } else {
-        store.initState(key, newValue)
+        store.setSilent(key, newValue) // Updates store SILENTLY
       }
 
-      // 3. Queue persistence
+      // 4. Queue persistence
       if (debouncedSync.current) {
         debouncedSync.current(newValue)
       }

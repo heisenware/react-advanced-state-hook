@@ -224,6 +224,29 @@ describe('Advanced State Management', () => {
       })
       expect(result.current[0]).toBe(10)
     })
+
+    it('correctly queues rapid synchronous functional state updates without stale closures', () => {
+      const { result } = renderHook(
+        () => useAdvancedState('rapidCount', { initial: 0 }),
+        { wrapper: createWrapper() }
+      )
+
+      act(() => {
+        // Fire three synchronous updates using the functional pattern.
+        // In the buggy version, `prev` will evaluate to 0 all three times
+        // because the layout effect hasn't fired to update the ref yet.
+        result.current[1](prev => prev + 1)
+        result.current[1](prev => prev + 1)
+        result.current[1](prev => prev + 1)
+      })
+
+      // If the stale closure bug exists, this will equal 1.
+      // Once fixed, it will correctly equal 3.
+      expect(result.current[0]).toBe(3)
+
+      // Also verify the central store has the correct final accumulated value
+      expect(result.current[2].get()).toBe(3)
+    })
   })
 
   describe('URL Scoping', () => {
